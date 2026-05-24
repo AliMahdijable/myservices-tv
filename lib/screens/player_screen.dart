@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/channel.dart';
@@ -37,6 +38,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _hasError = false;
   int _retryCount = 0;
   static const int _maxRetries = 5;
+  static const String _lastChannelKey = 'last_channel_index';
 
   Timer? _hideTimer;
   Timer? _channelSwitchDebounce;
@@ -73,12 +75,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _player = Player(
       configuration: const PlayerConfiguration(
-        bufferSize: 32 * 1024 * 1024, // 32MB buffer for stable streaming
+        bufferSize: 32 * 1024 * 1024,
       ),
     );
     _videoController = VideoController(_player);
 
     _setupPlayerListeners();
+    _configureMpv();
 
     WakelockPlus.enable();
 
@@ -94,6 +97,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _screenFocusNode.requestFocus();
     });
+  }
+
+  Future<void> _configureMpv() async {
+    try {
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        await platform.setProperty('network-timeout',        '15');
+        await platform.setProperty('demuxer-readahead-secs', '20');
+        await platform.setProperty('cache',                  'yes');
+        await platform.setProperty('cache-secs',             '30');
+        await platform.setProperty('hls-bitrate',            'max');
+        await platform.setProperty('stream-buffer-size',     '512k');
+      }
+    } catch (_) {}
   }
 
   void _setupPlayerListeners() {
@@ -129,7 +146,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _startBufferTimeoutTimer() {
     _bufferTimeoutTimer?.cancel();
-    _bufferTimeoutTimer = Timer(const Duration(seconds: 15), () {
+    _bufferTimeoutTimer = Timer(const Duration(seconds: 20), () {
       if (mounted && _isBuffering) _handleStreamError();
     });
   }
@@ -174,21 +191,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _hasError = false;
     });
 
+    // Persist last played channel for next session
+    SharedPreferences.getInstance().then(
+      (p) => p.setInt(_lastChannelKey, _currentIndex),
+    );
+
     await _doPlayChannel(channel);
   }
 
   Future<void> _doPlayChannel(Channel channel) async {
+    // After 2 consecutive failures, try alternate format (.m3u8 ↔ .ts)
+    final url = (_retryCount >= 2 && _retryCount < _maxRetries)
+        ? _alternateUrl(channel.url)
+        : channel.url;
     try {
       await _player.open(
-        Media(
-          channel.url,
-          httpHeaders: const {'User-Agent': 'Mozilla/5.0 IPTV Player'},
-        ),
+        Media(url, httpHeaders: const {'User-Agent': 'Mozilla/5.0 IPTV Player'}),
       );
       if (mounted) _screenFocusNode.requestFocus();
     } catch (_) {
       if (mounted) _handleStreamError();
     }
+  }
+
+  String _alternateUrl(String url) {
+    if (url.endsWith('.m3u8')) return '${url.substring(0, url.length - 5)}.ts';
+    if (url.endsWith('.ts'))   return '${url.substring(0, url.length - 3)}.m3u8';
+    return url;
   }
 
   void _retryManually() {
@@ -859,22 +888,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildChannelOSD() {
     return Positioned(
-      top: 70,
+      bottom: 90,
       left: 0,
       right: 0,
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            '${_currentIndex + 1} / ${_allChannels.length}',
-            style: AppFonts.cairo(
-              color: Colors.white70,
-              fontSize: 13,
+            color: Colors.black.withValues(alpha: 0.75),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.08),
             ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _currentChannel.name,
+                style: AppFonts.cairo(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${_currentIndex + 1}  /  ${_allChannels.length}',
+                style: AppFonts.cairo(
+                  color: Colors.white54,
+                  fontSize: 11,
+                ),
+              ),
+            ],
           ),
         ),
       ),
