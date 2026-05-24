@@ -700,10 +700,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 // Error state — shown when all retries exhausted
                 if (_hasError) _buildErrorOverlay(),
 
-                // Channel switch OSD — IgnorePointer so it never blocks taps
-                if (_showControls && !_showChannelList && !_hasError)
-                  IgnorePointer(child: _buildChannelOSD()),
-
                 // Controls overlay
                 AnimatedOpacity(
                   opacity: _showControls ? 1.0 : 0.0,
@@ -737,27 +733,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
 
-                // Remote control hints — IgnorePointer so it never blocks taps
+                // Remote control hints — Positioned wraps IgnorePointer (not vice versa)
                 if (_showControls && !_showChannelList && !_hasError)
-                  IgnorePointer(
-                    child: Positioned(
-                      bottom: 80,
-                      left: 0,
-                      right: 0,
+                  Positioned(
+                    bottom: 80,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
                       child: Center(
-                        child: AnimatedOpacity(
-                          opacity: _showControls ? 0.5 : 0.0,
-                          duration: const Duration(milliseconds: 150),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildHintChip(Icons.arrow_upward, 'السابقة'),
-                              const SizedBox(width: 10),
-                              _buildHintChip(Icons.arrow_downward, 'التالية'),
-                              const SizedBox(width: 10),
-                              _buildHintChip(Icons.arrow_forward, 'القائمة'),
-                            ],
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildHintChip(Icons.arrow_upward, 'السابقة'),
+                            const SizedBox(width: 10),
+                            _buildHintChip(Icons.arrow_downward, 'التالية'),
+                            const SizedBox(width: 10),
+                            _buildHintChip(Icons.arrow_forward, 'القائمة'),
+                          ],
                         ),
                       ),
                     ),
@@ -773,37 +765,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // Controls aspect ratio via layout — reliable unlike Video.fit which ignores updates
+  // Aspect ratio via fixed-depth SizedBox — Video stays at same tree position,
+  // preventing VideoState recreation (which would interrupt playback).
   Widget _buildVideoLayer() {
     return LayoutBuilder(builder: (context, constraints) {
       final sw = constraints.maxWidth;
       final sh = constraints.maxHeight;
       const ar = 16.0 / 9.0;
 
-      final video = Video(
-        controller: _videoController,
-        controls: NoVideoControls,
-        fit: BoxFit.fill,
-      );
-
+      double videoW, videoH;
       switch (_aspectMode) {
-        case 1: // تمديد — stretch to fill screen
-          return SizedBox.expand(child: video);
-        case 2: // تكبير — zoom/crop to fill
-          final double w = sw / sh > ar ? sw : sh * ar;
-          final double h = w / ar;
-          return ClipRect(
-            child: OverflowBox(
-              maxWidth: w,
-              maxHeight: h,
-              child: SizedBox(width: w, height: h, child: video),
-            ),
-          );
+        case 1: // تمديد — stretch to fill
+          videoW = sw;
+          videoH = sh;
+          break;
+        case 2: // تكبير — zoom/crop (oversized, clipped)
+          if (sw / sh > ar) { videoW = sw;       videoH = sw / ar; }
+          else               { videoH = sh;       videoW = sh * ar; }
+          break;
         default: // ملاءمة — letterbox/contain
-          return Center(
-            child: AspectRatio(aspectRatio: ar, child: video),
-          );
+          if (sw / sh > ar) { videoH = sh;       videoW = sh * ar; }
+          else               { videoW = sw;       videoH = sw / ar; }
       }
+
+      // ClipRect + Center + fixed SizedBox keeps Video at constant tree depth
+      return ClipRect(
+        child: Center(
+          child: SizedBox(
+            width: videoW,
+            height: videoH,
+            child: Video(
+              controller: _videoController,
+              controls: NoVideoControls,
+              fit: BoxFit.fill,
+            ),
+          ),
+        ),
+      );
     });
   }
 
@@ -930,47 +928,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
             style: AppFonts.cairo(color: Colors.white54, fontSize: 10),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildChannelOSD() {
-    return Positioned(
-      top: 72,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.75),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _currentChannel.name,
-                style: AppFonts.cairo(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${_currentIndex + 1}  /  ${_allChannels.length}',
-                style: AppFonts.cairo(
-                  color: Colors.white54,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
