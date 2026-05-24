@@ -439,8 +439,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
 
-    // Aspect ratio toggle via Info button or F key
+    // Aspect ratio toggle — Menu/Info/F4 on remote or keyboard
     if (key == LogicalKeyboardKey.info ||
+        key == LogicalKeyboardKey.menu ||
+        key == LogicalKeyboardKey.contextMenu ||
         key == LogicalKeyboardKey.f4 ||
         key == LogicalKeyboardKey.keyE) {
       _cycleAspect();
@@ -707,9 +709,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 // Error state — shown when all retries exhausted
                 if (_hasError) _buildErrorOverlay(),
 
-                // Channel switch OSD
+                // Channel switch OSD — IgnorePointer so it never blocks taps
                 if (_showControls && !_showChannelList && !_hasError)
-                  _buildChannelOSD(),
+                  IgnorePointer(child: _buildChannelOSD()),
 
                 // Controls overlay
                 AnimatedOpacity(
@@ -744,25 +746,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
 
-                // Remote control hints
+                // Remote control hints — IgnorePointer so it never blocks taps
                 if (_showControls && !_showChannelList && !_hasError)
-                  Positioned(
-                    bottom: 80,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: AnimatedOpacity(
-                        opacity: _showControls ? 0.5 : 0.0,
-                        duration: const Duration(milliseconds: 150),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildHintChip(Icons.arrow_upward, 'السابقة'),
-                            const SizedBox(width: 10),
-                            _buildHintChip(Icons.arrow_downward, 'التالية'),
-                            const SizedBox(width: 10),
-                            _buildHintChip(Icons.arrow_forward, 'القائمة'),
-                          ],
+                  IgnorePointer(
+                    child: Positioned(
+                      bottom: 80,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: AnimatedOpacity(
+                          opacity: _showControls ? 0.5 : 0.0,
+                          duration: const Duration(milliseconds: 150),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _buildHintChip(Icons.arrow_upward, 'السابقة'),
+                              const SizedBox(width: 10),
+                              _buildHintChip(Icons.arrow_downward, 'التالية'),
+                              const SizedBox(width: 10),
+                              _buildHintChip(Icons.arrow_forward, 'القائمة'),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -907,7 +911,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildChannelOSD() {
     return Positioned(
-      bottom: 90,
+      bottom: 140,
       left: 0,
       right: 0,
       child: Center(
