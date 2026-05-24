@@ -666,8 +666,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             onTap: _hasError ? _retryManually : _toggleControls,
             child: Stack(
               children: [
-                // Video player — aspect mode controlled via layout, not Video.fit
-                RepaintBoundary(child: _buildVideoLayer()),
+                // Video player
+                _buildVideoLayer(),
 
                 // Buffering indicator
                 if (_isBuffering && !_hasError)
@@ -765,44 +765,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // Aspect ratio via fixed-depth SizedBox — Video stays at same tree position,
-  // preventing VideoState recreation (which would interrupt playback).
   Widget _buildVideoLayer() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final sw = constraints.maxWidth;
-      final sh = constraints.maxHeight;
-      const ar = 16.0 / 9.0;
+    final size = MediaQuery.of(context).size;
+    final sw   = size.width;
+    final sh   = size.height;
+    const ar   = 16.0 / 9.0;
 
-      double videoW, videoH;
-      switch (_aspectMode) {
-        case 1: // تمديد — stretch to fill
-          videoW = sw;
-          videoH = sh;
-          break;
-        case 2: // تكبير — zoom/crop (oversized, clipped)
-          if (sw / sh > ar) { videoW = sw;       videoH = sw / ar; }
-          else               { videoH = sh;       videoW = sh * ar; }
-          break;
-        default: // ملاءمة — letterbox/contain
-          if (sw / sh > ar) { videoH = sh;       videoW = sh * ar; }
-          else               { videoW = sw;       videoH = sw / ar; }
-      }
+    double videoW, videoH;
+    switch (_aspectMode) {
+      case 1: // تمديد — stretch to fill
+        videoW = sw; videoH = sh;
+        break;
+      case 2: // تكبير — zoom/crop
+        if (sw / sh > ar) { videoW = sw;  videoH = sw / ar; }
+        else               { videoH = sh;  videoW = sh * ar; }
+        break;
+      default: // ملاءمة — letterbox
+        if (sw / sh > ar) { videoH = sh;  videoW = sh * ar; }
+        else               { videoW = sw;  videoH = sw / ar; }
+    }
 
-      // ClipRect + Center + fixed SizedBox keeps Video at constant tree depth
-      return ClipRect(
-        child: Center(
-          child: SizedBox(
-            width: videoW,
-            height: videoH,
-            child: Video(
-              controller: _videoController,
-              controls: NoVideoControls,
-              fit: BoxFit.fill,
-            ),
+    return ClipRect(
+      child: Center(
+        child: SizedBox(
+          width: videoW,
+          height: videoH,
+          child: Video(
+            key: const ValueKey('video'),
+            controller: _videoController,
+            controls: NoVideoControls,
+            fit: BoxFit.fill,
           ),
         ),
-      );
-    });
+      ),
+    );
   }
 
   Widget _buildErrorOverlay() {
