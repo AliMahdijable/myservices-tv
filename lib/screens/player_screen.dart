@@ -766,27 +766,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // Video always fills screen — panscan MPV property controls letterbox vs zoom
   Widget _buildVideoLayer() {
     return SizedBox.expand(
       child: Video(
-        key: const ValueKey('video'),
         controller: _videoController,
         controls: NoVideoControls,
-        fit: BoxFit.fill,
+        fit: _aspectMode == 0 ? BoxFit.contain : BoxFit.cover,
       ),
     );
   }
 
-  void _applyAspectMode() {
-    try {
-      final platform = _player.platform;
-      if (platform is NativePlayer) {
-        // panscan=0 → letterbox, panscan=1 → zoom/fill (crop edges)
-        platform.setProperty('panscan', _aspectMode == 1 ? '1.0' : '0.0');
-      }
-    } catch (_) {}
-  }
+  void _applyAspectMode() {} // kept for call-site compatibility
 
   Widget _buildErrorOverlay() {
     return Center(
