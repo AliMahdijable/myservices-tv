@@ -769,6 +769,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _buildVideoLayer() {
     return SizedBox.expand(
       child: Video(
+        key: ValueKey(_aspectMode),
         controller: _videoController,
         controls: NoVideoControls,
         fit: _aspectMode == 0 ? BoxFit.contain : BoxFit.cover,
@@ -776,7 +777,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  void _applyAspectMode() {} // kept for call-site compatibility
+  void _applyAspectMode() {}
 
   Widget _buildErrorOverlay() {
     return Center(
