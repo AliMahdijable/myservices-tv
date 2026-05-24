@@ -40,15 +40,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   static const int _maxRetries = 5;
   static const String _lastChannelKey = 'last_channel_index';
 
-  // 0 = fit (letterbox), 1 = fill (stretch), 2 = cover (crop)
+  // 0 = letterbox (panscan=0), 1 = zoom/fill (panscan=1)
   int _aspectMode = 0;
-  static const List<BoxFit> _aspectFits  = [BoxFit.contain, BoxFit.fill, BoxFit.cover];
-  static const List<IconData> _aspectIcons = [
-    Icons.fit_screen_rounded,
-    Icons.fullscreen_rounded,
-    Icons.crop_rounded,
-  ];
-  static const List<String> _aspectLabels = ['ملاءمة', 'تمديد', 'تكبير'];
+  static const List<IconData> _aspectIcons  = [Icons.fit_screen_rounded, Icons.crop_free_rounded];
+  static const List<String>   _aspectLabels = ['ملاءمة', 'ملء'];
 
   Timer? _hideTimer;
   Timer? _channelSwitchDebounce;
@@ -113,12 +108,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       final platform = _player.platform;
       if (platform is NativePlayer) {
-        await platform.setProperty('network-timeout',        '15');
-        await platform.setProperty('demuxer-readahead-secs', '20');
-        await platform.setProperty('cache',                  'yes');
-        await platform.setProperty('cache-secs',             '30');
-        await platform.setProperty('hls-bitrate',            'max');
-        await platform.setProperty('stream-buffer-size',     '512k');
+        await platform.setProperty('network-timeout',         '20');
+        await platform.setProperty('demuxer-readahead-secs',  '30');
+        await platform.setProperty('demuxer-max-bytes',       '50MiB');
+        await platform.setProperty('demuxer-max-back-bytes',  '25MiB');
+        await platform.setProperty('cache',                   'yes');
+        await platform.setProperty('cache-secs',              '60');
+        await platform.setProperty('stream-buffer-size',      '1MiB');
+        await platform.setProperty('hls-bitrate',             'max');
       }
     } catch (_) {}
   }
@@ -143,9 +140,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) _handleStreamError();
     });
 
-    // IPTV streams can "complete" (server closes connection) — reconnect
+    // For live IPTV, "completed" can fire on HLS segment boundaries — debounce
     _completedSub = _player.stream.completed.listen((completed) {
-      if (completed && mounted) _handleStreamError();
+      if (!completed || !mounted) return;
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted && _player.state.completed) _handleStreamError();
+      });
     });
 
     _playingSub = _player.stream.playing.listen((_) {
@@ -156,7 +156,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _startBufferTimeoutTimer() {
     _bufferTimeoutTimer?.cancel();
-    _bufferTimeoutTimer = Timer(const Duration(seconds: 20), () {
+    _bufferTimeoutTimer = Timer(const Duration(seconds: 35), () {
       if (mounted && _isBuffering) _handleStreamError();
     });
   }
@@ -218,6 +218,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _player.open(
         Media(url, httpHeaders: const {'User-Agent': 'Mozilla/5.0 IPTV Player'}),
       );
+      _applyAspectMode();
       if (mounted) _screenFocusNode.requestFocus();
     } catch (_) {
       if (mounted) _handleStreamError();
@@ -765,40 +766,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  // Video always fills screen — panscan MPV property controls letterbox vs zoom
   Widget _buildVideoLayer() {
-    final size = MediaQuery.of(context).size;
-    final sw   = size.width;
-    final sh   = size.height;
-    const ar   = 16.0 / 9.0;
-
-    double videoW, videoH;
-    switch (_aspectMode) {
-      case 1: // تمديد — stretch to fill
-        videoW = sw; videoH = sh;
-        break;
-      case 2: // تكبير — zoom/crop
-        if (sw / sh > ar) { videoW = sw;  videoH = sw / ar; }
-        else               { videoH = sh;  videoW = sh * ar; }
-        break;
-      default: // ملاءمة — letterbox
-        if (sw / sh > ar) { videoH = sh;  videoW = sh * ar; }
-        else               { videoW = sw;  videoH = sw / ar; }
-    }
-
-    return ClipRect(
-      child: Center(
-        child: SizedBox(
-          width: videoW,
-          height: videoH,
-          child: Video(
-            key: const ValueKey('video'),
-            controller: _videoController,
-            controls: NoVideoControls,
-            fit: BoxFit.fill,
-          ),
-        ),
+    return SizedBox.expand(
+      child: Video(
+        key: const ValueKey('video'),
+        controller: _videoController,
+        controls: NoVideoControls,
+        fit: BoxFit.fill,
       ),
     );
+  }
+
+  void _applyAspectMode() {
+    try {
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        // panscan=0 → letterbox, panscan=1 → zoom/fill (crop edges)
+        platform.setProperty('panscan', _aspectMode == 1 ? '1.0' : '0.0');
+      }
+    } catch (_) {}
   }
 
   Widget _buildErrorOverlay() {
@@ -1009,7 +996,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _cycleAspect() {
-    setState(() => _aspectMode = (_aspectMode + 1) % _aspectFits.length);
+    setState(() => _aspectMode = (_aspectMode + 1) % _aspectLabels.length);
+    _applyAspectMode();
     _resetHideTimer();
   }
 
