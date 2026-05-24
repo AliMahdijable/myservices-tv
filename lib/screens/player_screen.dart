@@ -40,6 +40,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   static const int _maxRetries = 5;
   static const String _lastChannelKey = 'last_channel_index';
 
+  // 0 = fit (letterbox), 1 = fill (stretch), 2 = cover (crop)
+  int _aspectMode = 0;
+  static const List<BoxFit> _aspectFits  = [BoxFit.contain, BoxFit.fill, BoxFit.cover];
+  static const List<IconData> _aspectIcons = [
+    Icons.fit_screen_rounded,
+    Icons.fullscreen_rounded,
+    Icons.crop_rounded,
+  ];
+  static const List<String> _aspectLabels = ['ملاءمة', 'تمديد', 'تكبير'];
+
   Timer? _hideTimer;
   Timer? _channelSwitchDebounce;
   Timer? _bufferTimeoutTimer;
@@ -429,6 +439,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
 
+    // Aspect ratio toggle via Info button or F key
+    if (key == LogicalKeyboardKey.info ||
+        key == LogicalKeyboardKey.f4 ||
+        key == LogicalKeyboardKey.keyE) {
+      _cycleAspect();
+      return KeyEventResult.handled;
+    }
+
     if (key == LogicalKeyboardKey.channelUp ||
         key == LogicalKeyboardKey.mediaTrackNext) {
       _nextChannel();
@@ -653,6 +671,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: Video(
                       controller: _videoController,
                       controls: NoVideoControls,
+                      fit: _aspectFits[_aspectMode],
                     ),
                   ),
                 ),
@@ -1007,6 +1026,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  void _cycleAspect() {
+    setState(() => _aspectMode = (_aspectMode + 1) % _aspectFits.length);
+    _resetHideTimer();
+  }
+
   Widget _buildBottomBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1018,7 +1042,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             onTap: _currentIndex > 0 ? _previousChannel : null,
             size: 32,
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: 16),
           _ControlButton(
             icon: Icons.list_rounded,
             onTap: () {
@@ -1032,7 +1056,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
             size: 28,
             highlighted: _showChannelList,
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: 16),
+          // Aspect ratio cycle button
+          _AspectButton(
+            icon: _aspectIcons[_aspectMode],
+            label: _aspectLabels[_aspectMode],
+            onTap: _cycleAspect,
+          ),
+          const SizedBox(width: 16),
           _ControlButton(
             icon: Icons.skip_next_rounded,
             onTap:
@@ -1154,6 +1185,76 @@ class _SidebarItem {
   const _SidebarItem.channel(this.channel, this.globalIndex)
       : isHeader = false,
         category = null;
+}
+
+class _AspectButton extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _AspectButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_AspectButton> createState() => _AspectButtonState();
+}
+
+class _AspectButtonState extends State<_AspectButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: (f) => setState(() => _isFocused = f),
+      onKeyEvent: (_, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.select ||
+                event.logicalKey == LogicalKeyboardKey.enter)) {
+          widget.onTap();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: _isFocused
+                ? AppColors.accentRed.withValues(alpha: 0.3)
+                : Colors.white.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _isFocused
+                  ? AppColors.accentRed.withValues(alpha: 0.7)
+                  : Colors.transparent,
+              width: _isFocused ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(widget.icon,
+                  color: _isFocused ? Colors.white : Colors.white70, size: 18),
+              const SizedBox(width: 5),
+              Text(
+                widget.label,
+                style: AppFonts.cairo(
+                  color: _isFocused ? Colors.white : Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ControlButton extends StatefulWidget {
