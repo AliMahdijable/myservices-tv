@@ -439,9 +439,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
 
-    // Aspect ratio toggle — Menu/Info/F4 on remote or keyboard
+    // Aspect ratio toggle — Info/ContextMenu/F4 on remote or keyboard
     if (key == LogicalKeyboardKey.info ||
-        key == LogicalKeyboardKey.menu ||
         key == LogicalKeyboardKey.contextMenu ||
         key == LogicalKeyboardKey.f4 ||
         key == LogicalKeyboardKey.keyE) {
@@ -667,16 +666,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             onTap: _hasError ? _retryManually : _toggleControls,
             child: Stack(
               children: [
-                // Video player
-                Center(
-                  child: RepaintBoundary(
-                    child: Video(
-                      controller: _videoController,
-                      controls: NoVideoControls,
-                      fit: _aspectFits[_aspectMode],
-                    ),
-                  ),
-                ),
+                // Video player — aspect mode controlled via layout, not Video.fit
+                RepaintBoundary(child: _buildVideoLayer()),
 
                 // Buffering indicator
                 if (_isBuffering && !_hasError)
@@ -780,6 +771,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       ),
     );
+  }
+
+  // Controls aspect ratio via layout — reliable unlike Video.fit which ignores updates
+  Widget _buildVideoLayer() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final sw = constraints.maxWidth;
+      final sh = constraints.maxHeight;
+      const ar = 16.0 / 9.0;
+
+      final video = Video(
+        controller: _videoController,
+        controls: NoVideoControls,
+        fit: BoxFit.fill,
+      );
+
+      switch (_aspectMode) {
+        case 1: // تمديد — stretch to fill screen
+          return SizedBox.expand(child: video);
+        case 2: // تكبير — zoom/crop to fill
+          final double w = sw / sh > ar ? sw : sh * ar;
+          final double h = w / ar;
+          return ClipRect(
+            child: OverflowBox(
+              maxWidth: w,
+              maxHeight: h,
+              child: SizedBox(width: w, height: h, child: video),
+            ),
+          );
+        default: // ملاءمة — letterbox/contain
+          return Center(
+            child: AspectRatio(aspectRatio: ar, child: video),
+          );
+      }
+    });
   }
 
   Widget _buildErrorOverlay() {
@@ -911,7 +936,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildChannelOSD() {
     return Positioned(
-      bottom: 140,
+      top: 72,
       left: 0,
       right: 0,
       child: Center(
