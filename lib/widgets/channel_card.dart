@@ -8,41 +8,27 @@ class ChannelCard extends StatefulWidget {
   final Channel channel;
   final VoidCallback onTap;
   final bool autofocus;
+  final bool isFavorite;
 
   const ChannelCard({
     super.key,
     required this.channel,
     required this.onTap,
     this.autofocus = false,
+    this.isFavorite = false,
   });
 
   @override
   State<ChannelCard> createState() => _ChannelCardState();
 }
 
-class _ChannelCardState extends State<ChannelCard>
-    with SingleTickerProviderStateMixin {
+class _ChannelCardState extends State<ChannelCard> {
   bool _isPressed = false;
   bool _isFocused = false;
   final FocusNode _focusNode = FocusNode();
-  late AnimationController _glowController;
-  late Animation<double> _glowAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _glowController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-    _glowAnimation = Tween<double>(begin: 0.3, end: 0.7).animate(
-      CurvedAnimation(parent: _glowController, curve: Curves.easeInOut),
-    );
-  }
 
   @override
   void dispose() {
-    _glowController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -62,227 +48,237 @@ class _ChannelCardState extends State<ChannelCard>
   void _onFocusChange(bool focused) {
     setState(() => _isFocused = focused);
     if (focused) {
-      _glowController.repeat(reverse: true);
-      if (mounted) {
-        // Auto-scroll all ancestor scrollables to make this card visible
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Scrollable.ensureVisible(
-              context,
-              alignment: 0.3,
-              duration: const Duration(milliseconds: 100),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
-    } else {
-      _glowController.stop();
-      _glowController.reset();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _isFocused) _keepFocusedCardVisible();
+      });
     }
+  }
+
+  Future<void> _keepFocusedCardVisible() async {
+    await Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.easeOut,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+    );
+    if (!mounted || !_isFocused) return;
+    await Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.easeOut,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      focusNode: _focusNode,
-      autofocus: widget.autofocus,
-      onFocusChange: _onFocusChange,
-      onKeyEvent: _handleKeyEvent,
-      child: GestureDetector(
-        onTapDown: (_) => setState(() => _isPressed = true),
-        onTapUp: (_) => setState(() => _isPressed = false),
-        onTapCancel: () => setState(() => _isPressed = false),
-        onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _glowAnimation,
-          builder: (context, child) {
-            final glowAlpha = _isFocused ? _glowAnimation.value : 0.0;
-            return AnimatedScale(
-              scale: _isPressed ? 0.94 : (_isFocused ? 1.1 : 1.0),
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOut,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                width: 120,
-                margin: const EdgeInsets.symmetric(horizontal: 6),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  color: const Color(0xFF111D2E),
-                  border: Border.all(
-                    color: _isFocused
-                        ? AppColors.accentRed
-                        : Colors.white.withValues(alpha: 0.06),
-                    width: _isFocused ? 3 : 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _isFocused
-                          ? AppColors.accentRed.withValues(alpha: 0.5)
-                          : Colors.black.withValues(alpha: 0.35),
-                      blurRadius: _isFocused ? 24 : 12,
-                      offset: const Offset(0, 4),
-                    ),
-                    if (_isFocused) ...[
-                      // Pulsing outer glow
-                      BoxShadow(
-                        color: AppColors.accentRed
-                            .withValues(alpha: glowAlpha * 0.5),
-                        blurRadius: 35,
-                        spreadRadius: 4,
-                      ),
-                      // Inner bright glow
-                      BoxShadow(
-                        color: AppColors.accentRed
-                            .withValues(alpha: 0.25),
-                        blurRadius: 12,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ],
+    return Semantics(
+      button: true,
+      focusable: true,
+      focused: _isFocused,
+      label: 'تشغيل قناة ${widget.channel.name}',
+      onTap: widget.onTap,
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: widget.autofocus,
+        onFocusChange: _onFocusChange,
+        onKeyEvent: _handleKeyEvent,
+        child: GestureDetector(
+          onTapDown: (_) => setState(() => _isPressed = true),
+          onTapUp: (_) => setState(() => _isPressed = false),
+          onTapCancel: () => setState(() => _isPressed = false),
+          onTap: widget.onTap,
+          child: AnimatedScale(
+            scale: _isPressed ? 0.96 : (_isFocused ? 1.06 : 1.0),
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOut,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              width: 136,
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                color: const Color(0xFF111D2E),
+                border: Border.all(
+                  color: _isFocused
+                      ? AppColors.accentRed
+                      : Colors.white.withValues(alpha: 0.06),
+                  width: _isFocused ? 3 : 1,
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(15),
-                  child: Stack(
-                    children: [
-                      // Full card content
-                      Column(
-                        children: [
-                          // Logo area
-                          Expanded(
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    _isFocused
-                                        ? const Color(0xFF1E3A58)
-                                        : const Color(0xFF182840),
-                                    const Color(0xFF0E1B2D)
-                                        .withValues(alpha: 0.5),
-                                  ],
-                                ),
-                              ),
-                              child: _buildLogo(),
-                            ),
-                          ),
-                          // Bottom: Name bar
-                          Container(
+                boxShadow: [
+                  BoxShadow(
+                    color: _isFocused
+                        ? AppColors.accentRed.withValues(alpha: 0.48)
+                        : Colors.black.withValues(alpha: 0.35),
+                    blurRadius: _isFocused ? 18 : 10,
+                    spreadRadius: _isFocused ? 1 : 0,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                child: Stack(
+                  children: [
+                    // Full card content
+                    Column(
+                      children: [
+                        // Logo area
+                        Expanded(
+                          child: Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 10),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
                                 colors: [
                                   _isFocused
-                                      ? AppColors.accentRed
-                                          .withValues(alpha: 0.35)
-                                      : const Color(0xFF0C1825),
-                                  _isFocused
-                                      ? const Color(0xFF1A0A10)
-                                      : const Color(0xFF091320),
+                                      ? const Color(0xFF1E3A58)
+                                      : const Color(0xFF182840),
+                                  const Color(
+                                    0xFF0E1B2D,
+                                  ).withValues(alpha: 0.5),
                                 ],
                               ),
                             ),
-                            child: Text(
-                              widget.channel.name,
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppFonts.cairo(
-                                color: Colors.white,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                            child: _buildLogo(),
                           ),
-                        ],
-                      ),
-
-                      // "مباشر" badge
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Container(
+                        ),
+                        // Bottom: Name bar
+                        Container(
+                          width: double.infinity,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
+                            horizontal: 8,
+                            vertical: 10,
+                          ),
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
                               colors: [
-                                Color(0xFFD32F2F),
-                                Color(0xFFEF5350)
+                                _isFocused
+                                    ? AppColors.accentRed.withValues(
+                                        alpha: 0.35,
+                                      )
+                                    : const Color(0xFF0C1825),
+                                _isFocused
+                                    ? const Color(0xFF1A0A10)
+                                    : const Color(0xFF091320),
                               ],
                             ),
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.red.withValues(alpha: 0.4),
-                                blurRadius: 6,
-                              ),
-                            ],
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 4,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.white
-                                          .withValues(alpha: 0.7),
-                                      blurRadius: 3,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                'مباشر',
-                                style: AppFonts.cairo(
-                                  color: Colors.white,
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            widget.channel.name,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppFonts.cairo(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // Favorite heart icon
+                    if (widget.isFavorite)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: const Icon(
+                            Icons.favorite,
+                            color: Color(0xFFEF5350),
+                            size: 11,
                           ),
                         ),
                       ),
 
-                      // Focus top highlight line
-                      if (_isFocused)
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: Container(
-                            height: 3,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  AppColors.accentRed.withValues(alpha: 0.0),
-                                  AppColors.accentRed,
-                                  AppColors.accentRed.withValues(alpha: 0.0),
+                    // "مباشر" badge
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFD32F2F), Color(0xFFEF5350)],
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.red.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 4,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    blurRadius: 3,
+                                  ),
                                 ],
                               ),
                             ),
+                            const SizedBox(width: 3),
+                            Text(
+                              'مباشر',
+                              style: AppFonts.cairo(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Focus top highlight line
+                    if (_isFocused)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          height: 3,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.accentRed.withValues(alpha: 0.0),
+                                AppColors.accentRed,
+                                AppColors.accentRed.withValues(alpha: 0.0),
+                              ],
+                            ),
                           ),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               ),
-            );
-          },
+            ),
+          ),
         ),
       ),
     );
@@ -293,6 +289,11 @@ class _ChannelCardState extends State<ChannelCard>
       return CachedNetworkImage(
         imageUrl: widget.channel.logoUrl,
         fit: BoxFit.contain,
+        memCacheWidth: 192,
+        memCacheHeight: 128,
+        maxWidthDiskCache: 256,
+        maxHeightDiskCache: 192,
+        fadeInDuration: const Duration(milliseconds: 150),
         placeholder: (context, url) => _buildShimmerPlaceholder(),
         errorWidget: (context, url, error) => _buildAppLogo(),
       );
@@ -316,10 +317,7 @@ class _ChannelCardState extends State<ChannelCard>
   Widget _buildAppLogo() {
     return Padding(
       padding: const EdgeInsets.all(6),
-      child: Image.asset(
-        'assets/images/logo.png',
-        fit: BoxFit.contain,
-      ),
+      child: Image.asset('assets/images/logo.png', fit: BoxFit.contain),
     );
   }
 }

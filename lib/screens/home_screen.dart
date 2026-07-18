@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shimmer/shimmer.dart';
@@ -8,6 +10,9 @@ import '../theme/app_theme.dart';
 import '../widgets/category_section.dart';
 import 'player_screen.dart';
 import 'setup_screen.dart';
+import 'search_screen.dart';
+import '../services/favorites_service.dart';
+import '../services/recently_watched_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final List<ChannelCategory>? preloadedCategories;
@@ -24,6 +29,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isRefreshing = false;
   String? _errorMessage;
   DateTime? _lastBackPress;
+  Set<String> _favoriteUrls = {};
+  List<Channel> _favoriteChannels = [];
+  List<Channel> _recentlyWatched = [];
+  int _dynamicDataRequestId = 0;
+  final ScrollController _homeScrollController = ScrollController();
 
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
@@ -35,14 +45,22 @@ class _HomeScreenState extends State<HomeScreen> {
         widget.preloadedCategories!.isNotEmpty) {
       _categories = widget.preloadedCategories!;
       _isLoading = false;
+      unawaited(_loadDynamicData());
     } else {
-      _loadChannels();
+      unawaited(_loadChannels());
     }
   }
 
+  @override
+  void dispose() {
+    _homeScrollController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadChannels({bool forceRefresh = false}) async {
+    final refreshInPlace = forceRefresh && _categories.isNotEmpty;
     setState(() {
-      if (forceRefresh) {
+      if (refreshInPlace) {
         _isRefreshing = true;
       } else {
         _isLoading = true;
@@ -51,38 +69,72 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final categories =
-          await ChannelService.fetchCategories(forceRefresh: forceRefresh);
+      final categories = await ChannelService.fetchCategories(
+        forceRefresh: forceRefresh,
+      );
       if (mounted) {
         setState(() {
           _categories = categories;
           _isLoading = false;
           _isRefreshing = false;
         });
+        unawaited(_loadDynamicData());
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
-        setState(() {
-          _errorMessage = 'فشل في تحميل القنوات\nتحقق من اتصالك بالشبكة';
-          _isLoading = false;
-          _isRefreshing = false;
-        });
+        if (refreshInPlace) {
+          setState(() {
+            _errorMessage = null;
+            _isLoading = false;
+            _isRefreshing = false;
+          });
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(
+                  'تعذّر تحديث القنوات، تم الاحتفاظ بالقائمة الحالية',
+                  textAlign: TextAlign.center,
+                  style: AppFonts.cairo(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                duration: const Duration(seconds: 3),
+                backgroundColor: AppColors.surfaceDark,
+                behavior: SnackBarBehavior.floating,
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 60,
+                  vertical: 20,
+                ),
+              ),
+            );
+        } else {
+          setState(() {
+            _errorMessage = 'فشل في تحميل القنوات\nتحقق من اتصالك بالشبكة';
+            _isLoading = false;
+            _isRefreshing = false;
+          });
+        }
       }
     }
   }
 
   void _openPlayer(Channel channel, List<Channel> categoryChannels) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => PlayerScreen(
-          channel: channel,
-          categories: _categories,
-        ),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) =>
+                PlayerScreen(channel: channel, categories: _categories),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) {
+          if (mounted) unawaited(_loadDynamicData());
+        });
   }
 
   void _openSettings() {
@@ -93,10 +145,107 @@ class _HomeScreenState extends State<HomeScreen> {
             FadeTransition(opacity: animation, child: child),
         transitionDuration: const Duration(milliseconds: 200),
       ),
-    ).then((_) {
-      // Reload channels if server was changed
-      if (mounted) _loadChannels(forceRefresh: true);
-    });
+    );
+  }
+
+  Future<void> _loadDynamicData() async {
+    final requestId = ++_dynamicDataRequestId;
+    final categories = List<ChannelCategory>.unmodifiable(_categories);
+
+    try {
+      final results = await Future.wait<Object>([
+        FavoritesService.getFavoriteUrls(),
+        FavoritesService.getFavoriteChannels(categories),
+        RecentlyWatchedService.getChannels(),
+      ]);
+      final favoriteUrls = results[0] as Set<String>;
+      final favoriteChannels = results[1] as List<Channel>;
+      final storedRecent = results[2] as List<Channel>;
+      final recentChannels = _bindRecentToCurrent(storedRecent, categories);
+
+      if (!mounted || requestId != _dynamicDataRequestId) return;
+      final keepInitialPositionAtTop =
+          _favoriteChannels.isEmpty &&
+          _recentlyWatched.isEmpty &&
+          (!_homeScrollController.hasClients ||
+              _homeScrollController.offset <= 1);
+      setState(() {
+        _favoriteUrls = favoriteUrls;
+        _favoriteChannels = favoriteChannels;
+        _recentlyWatched = recentChannels;
+      });
+      if (keepInitialPositionAtTop &&
+          (favoriteChannels.isNotEmpty || recentChannels.isNotEmpty)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _homeScrollController.hasClients) {
+            _homeScrollController.jumpTo(0);
+          }
+        });
+      }
+    } catch (error) {
+      debugPrint('Failed to load home dynamic data: $error');
+    }
+  }
+
+  List<Channel> _bindRecentToCurrent(
+    List<Channel> storedRecent,
+    List<ChannelCategory> categories,
+  ) {
+    final byUrl = <String, Channel>{};
+    final byStreamId = <int, Channel>{};
+    final byTvgId = <String, Channel>{};
+    final byNameAndGroup = <String, Channel>{};
+
+    for (final channel in categories.expand((category) => category.channels)) {
+      byUrl.putIfAbsent(channel.url, () => channel);
+      if (channel.streamId > 0) {
+        byStreamId.putIfAbsent(channel.streamId, () => channel);
+      }
+      final tvgId = channel.tvgId.trim().toLowerCase();
+      if (tvgId.isNotEmpty) {
+        byTvgId.putIfAbsent(tvgId, () => channel);
+      }
+      byNameAndGroup.putIfAbsent(_channelNameGroupKey(channel), () => channel);
+    }
+
+    final resolved = <Channel>[];
+    final addedUrls = <String>{};
+    for (final stored in storedRecent) {
+      Channel? current = byUrl[stored.url];
+      if (current == null && stored.streamId > 0) {
+        current = byStreamId[stored.streamId];
+      }
+      final tvgId = stored.tvgId.trim().toLowerCase();
+      if (current == null && tvgId.isNotEmpty) {
+        current = byTvgId[tvgId];
+      }
+      current ??= byNameAndGroup[_channelNameGroupKey(stored)];
+
+      if (current != null && addedUrls.add(current.url)) {
+        resolved.add(current);
+      }
+    }
+    return resolved;
+  }
+
+  String _channelNameGroupKey(Channel channel) =>
+      '${channel.name.trim().toLowerCase()}\u0000'
+      '${channel.group.trim().toLowerCase()}';
+
+  void _openSearch() {
+    if (_categories.isEmpty) return;
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => SearchScreen(categories: _categories),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) {
+          if (mounted) unawaited(_loadDynamicData());
+        });
   }
 
   void _handleBackOnHome() {
@@ -143,6 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
             gradient: AppColors.backgroundGradient,
           ),
           child: SafeArea(
+            minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Column(
               children: [
                 _buildAppBar(),
@@ -150,8 +300,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: _isLoading
                       ? _buildLoadingShimmer()
                       : _errorMessage != null
-                          ? _buildErrorView()
-                          : _buildChannelsList(),
+                      ? _buildErrorView()
+                      : _categories.isEmpty
+                      ? _buildEmptyView()
+                      : _buildChannelsList(),
                 ),
               ],
             ),
@@ -181,10 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.asset(
-                'assets/images/logo.png',
-                fit: BoxFit.contain,
-              ),
+              child: Image.asset('assets/images/logo.png', fit: BoxFit.contain),
             ),
           ),
           const SizedBox(width: 12),
@@ -213,21 +362,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           if (_totalChannels > 0)
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 color: AppColors.surfaceDark,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.08),
-                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.live_tv,
-                      color: AppColors.accentRedLight, size: 15),
+                  const Icon(
+                    Icons.live_tv,
+                    color: AppColors.accentRedLight,
+                    size: 15,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     '$_totalChannels',
@@ -241,41 +390,127 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           _FocusableIconButton(
+            icon: Icons.search_rounded,
+            semanticLabel: 'البحث عن قناة',
+            onTap: _categories.isNotEmpty ? _openSearch : null,
+          ),
+          const SizedBox(width: 6),
+          _FocusableIconButton(
             icon: Icons.refresh_rounded,
+            semanticLabel: 'تحديث القنوات',
             isLoading: _isRefreshing,
-            onTap: _isRefreshing
+            onTap: _isRefreshing || _isLoading
                 ? null
                 : () => _loadChannels(forceRefresh: true),
           ),
           const SizedBox(width: 6),
-          if (AppConfig.baseUrl != AppConfig.defaultBaseUrl ||
-              AppConfig.username != AppConfig.defaultUsername)
-            _FocusableIconButton(
-              icon: Icons.settings_rounded,
-              onTap: _openSettings,
-            ),
+          _FocusableIconButton(
+            icon: Icons.settings_rounded,
+            semanticLabel: 'إعدادات مصدر القنوات',
+            onTap: _openSettings,
+          ),
         ],
       ),
     );
   }
 
   Widget _buildChannelsList() {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(
+    final hasRecent = _recentlyWatched.isNotEmpty;
+    final hasFavs = _favoriteChannels.isNotEmpty;
+    final extra = (hasRecent ? 1 : 0) + (hasFavs ? 1 : 0);
+    final sectionIndexes = <Key, int>{};
+    var sectionIndex = 0;
+    if (hasRecent) {
+      sectionIndexes[const ValueKey<String>('special:recent')] = sectionIndex++;
+    }
+    if (hasFavs) {
+      sectionIndexes[const ValueKey<String>('special:favorites')] =
+          sectionIndex++;
+    }
+    for (final category in _categories) {
+      sectionIndexes[_categorySectionKey(category)] = sectionIndex++;
+    }
+    sectionIndexes[const ValueKey<String>('home-copyright')] = sectionIndex;
+
+    return ListView.builder(
+      controller: _homeScrollController,
+      physics: const ClampingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
       ),
       padding: const EdgeInsets.only(top: 8, bottom: 8),
-      child: Column(
-        children: [
-          for (int i = 0; i < _categories.length; i++)
-            CategorySection(
-              category: _categories[i],
-              onChannelTap: _openPlayer,
-              isFirstCategory: i == 0,
-            ),
-          _buildCopyright(),
-        ],
-      ),
+      itemCount: _categories.length + extra + 1,
+      findChildIndexCallback: (key) => sectionIndexes[key],
+      itemBuilder: (context, index) {
+        int i = index;
+
+        if (hasRecent) {
+          if (i == 0) {
+            return _buildSpecialSection(
+              sectionKey: 'recent',
+              displayName: 'شاهدت مؤخراً',
+              icon: Icons.history_rounded,
+              channels: _recentlyWatched,
+              isFirst: true,
+            );
+          }
+          i--;
+        }
+
+        if (hasFavs) {
+          if (i == 0) {
+            return _buildSpecialSection(
+              sectionKey: 'favorites',
+              displayName: 'المفضلة',
+              icon: Icons.favorite_rounded,
+              channels: _favoriteChannels,
+              isFirst: !hasRecent,
+            );
+          }
+          i--;
+        }
+
+        if (i == _categories.length) {
+          return KeyedSubtree(
+            key: const ValueKey<String>('home-copyright'),
+            child: _buildCopyright(),
+          );
+        }
+
+        final category = _categories[i];
+        return CategorySection(
+          key: _categorySectionKey(category),
+          category: category,
+          onChannelTap: _openPlayer,
+          isFirstCategory: i == 0 && extra == 0,
+          favoriteUrls: _favoriteUrls,
+        );
+      },
+    );
+  }
+
+  Key _categorySectionKey(ChannelCategory category) =>
+      ValueKey<String>('category:${category.name}:${category.sortOrder}');
+
+  Widget _buildSpecialSection({
+    required String sectionKey,
+    required String displayName,
+    required IconData icon,
+    required List<Channel> channels,
+    bool isFirst = false,
+  }) {
+    final cat = ChannelCategory(
+      name: displayName,
+      displayName: displayName,
+      channels: channels,
+      sortOrder: -1,
+    );
+    return CategorySection(
+      key: ValueKey<String>('special:$sectionKey'),
+      category: cat,
+      onChannelTap: _openPlayer,
+      isFirstCategory: isFirst,
+      favoriteUrls: _favoriteUrls,
+      iconOverride: icon,
     );
   }
 
@@ -285,10 +520,7 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       child: Column(
         children: [
-          Divider(
-            color: Colors.white.withValues(alpha: 0.06),
-            thickness: 1,
-          ),
+          Divider(color: Colors.white.withValues(alpha: 0.06), thickness: 1),
           const SizedBox(height: 12),
           Image.asset('assets/images/logo.png', width: 30, height: 30),
           const SizedBox(height: 8),
@@ -353,6 +585,107 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildEmptyView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceDark.withValues(alpha: 0.8),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.tv_off_rounded,
+                color: AppColors.textMuted,
+                size: 60,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'لا توجد قنوات متاحة',
+              textAlign: TextAlign.center,
+              textDirection: TextDirection.rtl,
+              style: AppFonts.cairo(
+                color: AppColors.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'حدّث القائمة أو راجع إعدادات مصدر القنوات',
+              textAlign: TextAlign.center,
+              textDirection: TextDirection.rtl,
+              style: AppFonts.cairo(
+                color: AppColors.textSecondary,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 24),
+            FocusTraversalGroup(
+              policy: WidgetOrderTraversalPolicy(),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    autofocus: true,
+                    onPressed: () => _loadChannels(forceRefresh: true),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(
+                      'تحديث القائمة',
+                      style: AppFonts.cairo(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accentRed,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: _openSettings,
+                    icon: const Icon(Icons.settings_rounded),
+                    label: Text(
+                      'الإعدادات',
+                      style: AppFonts.cairo(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceDark,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildErrorView() {
     return Center(
       child: Padding(
@@ -366,8 +699,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: AppColors.accentRed.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Icon(Icons.wifi_off_rounded,
-                  color: AppColors.accentRed, size: 60),
+              child: const Icon(
+                Icons.wifi_off_rounded,
+                color: AppColors.accentRed,
+                size: 60,
+              ),
             ),
             const SizedBox(height: 24),
             Text(
@@ -381,45 +717,59 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () => _loadChannels(forceRefresh: true),
-                  icon: const Icon(Icons.refresh),
-                  label: Text(
-                    'إعادة المحاولة',
-                    style: AppFonts.cairo(
-                        fontSize: 15, fontWeight: FontWeight.w600),
+            FocusTraversalGroup(
+              policy: WidgetOrderTraversalPolicy(),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    autofocus: true,
+                    onPressed: () => _loadChannels(forceRefresh: true),
+                    icon: const Icon(Icons.refresh),
+                    label: Text(
+                      'إعادة المحاولة',
+                      style: AppFonts.cairo(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accentRed,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accentRed,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: _openSettings,
+                    icon: const Icon(Icons.settings),
+                    label: Text(
+                      'الإعدادات',
+                      style: AppFonts.cairo(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceDark,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  onPressed: _openSettings,
-                  icon: const Icon(Icons.settings),
-                  label: Text(
-                    'الإعدادات',
-                    style: AppFonts.cairo(
-                        fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.surfaceDark,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
@@ -430,11 +780,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _FocusableIconButton extends StatefulWidget {
   final IconData icon;
+  final String semanticLabel;
   final bool isLoading;
   final VoidCallback? onTap;
 
   const _FocusableIconButton({
     required this.icon,
+    required this.semanticLabel,
     this.isLoading = false,
     this.onTap,
   });
@@ -448,55 +800,76 @@ class _FocusableIconButtonState extends State<_FocusableIconButton> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      onFocusChange: (focused) => setState(() => _isFocused = focused),
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            (event.logicalKey == LogicalKeyboardKey.select ||
-                event.logicalKey == LogicalKeyboardKey.enter)) {
-          widget.onTap?.call();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: _isFocused ? AppColors.accentRed : AppColors.surfaceDark,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _isFocused
-                  ? AppColors.accentRedLight
-                  : Colors.white.withValues(alpha: 0.06),
-              width: _isFocused ? 2 : 1,
-            ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: AppColors.accentRed.withValues(alpha: 0.4),
-                      blurRadius: 12,
-                    ),
-                  ]
-                : [],
-          ),
-          child: widget.isLoading
-              ? const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : Icon(
-                  widget.icon,
-                  color:
-                      _isFocused ? Colors.white : AppColors.textSecondary,
-                  size: 24,
+    final enabled = widget.onTap != null && !widget.isLoading;
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.semanticLabel,
+      value: widget.isLoading ? 'جارٍ التحديث' : null,
+      child: Focus(
+        canRequestFocus: enabled,
+        skipTraversal: !enabled,
+        onFocusChange: (focused) {
+          if (_isFocused != focused) {
+            setState(() => _isFocused = focused);
+          }
+        },
+        onKeyEvent: (node, event) {
+          if (enabled &&
+              event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.select ||
+                  event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+            widget.onTap!.call();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: GestureDetector(
+          onTap: enabled ? widget.onTap : null,
+          child: AnimatedOpacity(
+            opacity: enabled || widget.isLoading ? 1 : 0.42,
+            duration: const Duration(milliseconds: 150),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: _isFocused ? AppColors.accentRed : AppColors.surfaceDark,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _isFocused
+                      ? AppColors.accentRedLight
+                      : Colors.white.withValues(alpha: 0.06),
+                  width: _isFocused ? 2 : 1,
                 ),
+                boxShadow: _isFocused
+                    ? [
+                        BoxShadow(
+                          color: AppColors.accentRed.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                        ),
+                      ]
+                    : [],
+              ),
+              child: widget.isLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      widget.icon,
+                      color: _isFocused
+                          ? Colors.white
+                          : AppColors.textSecondary,
+                      size: 24,
+                    ),
+            ),
+          ),
         ),
       ),
     );

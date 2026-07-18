@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../models/channel.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_helpers.dart';
@@ -8,12 +9,16 @@ class CategorySection extends StatelessWidget {
   final ChannelCategory category;
   final Function(Channel channel, List<Channel> allChannels) onChannelTap;
   final bool isFirstCategory;
+  final Set<String> favoriteUrls;
+  final IconData? iconOverride;
 
   const CategorySection({
     super.key,
     required this.category,
     required this.onChannelTap,
     this.isFirstCategory = false,
+    this.favoriteUrls = const {},
+    this.iconOverride,
   });
 
   @override
@@ -33,7 +38,7 @@ class CategorySection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
-                  getCategoryIcon(category.name),
+                  iconOverride ?? getCategoryIcon(category.name),
                   color: Colors.white,
                   size: 20,
                 ),
@@ -63,8 +68,10 @@ class CategorySection extends StatelessWidget {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(20),
@@ -82,30 +89,41 @@ class CategorySection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        // Horizontal channel slider - using SingleChildScrollView + Row
-        // instead of ListView.builder to keep all focus nodes alive for D-pad navigation
-        // clipBehavior: Clip.none allows scaled/glowing focused cards to overflow
+        // A fixed item extent keeps lazy layout predictable for TV D-pad scrolling.
+        // clipBehavior: Clip.none allows the focused card to scale outside the rail.
         SizedBox(
-          height: 190,
+          height: 206,
           child: FocusTraversalGroup(
-            child: SingleChildScrollView(
+            child: ListView.builder(
+              key: PageStorageKey<String>(
+                'channel-rail:${category.name}:${category.sortOrder}',
+              ),
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: List.generate(category.channels.length, (index) {
-                  final channel = category.channels[index];
-                  return RepaintBoundary(
-                    child: ChannelCard(
-                      channel: channel,
-                      onTap: () => onChannelTap(channel, category.channels),
-                      autofocus: isFirstCategory && index == 0,
-                    ),
-                  );
-                }),
-              ),
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              itemExtent: 148,
+              scrollCacheExtent: const ScrollCacheExtent.pixels(592),
+              itemCount: category.channels.length,
+              findChildIndexCallback: (key) {
+                if (key is! ValueKey<String>) return null;
+                final index = category.channels.indexWhere(
+                  (channel) => channel.url == key.value,
+                );
+                return index < 0 ? null : index;
+              },
+              itemBuilder: (context, index) {
+                final channel = category.channels[index];
+                return RepaintBoundary(
+                  key: ValueKey<String>(channel.url),
+                  child: ChannelCard(
+                    channel: channel,
+                    onTap: () => onChannelTap(channel, category.channels),
+                    autofocus: isFirstCategory && index == 0,
+                    isFavorite: favoriteUrls.contains(channel.url),
+                  ),
+                );
+              },
             ),
           ),
         ),

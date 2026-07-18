@@ -1,7 +1,7 @@
 name: myservices_tv
 description: "MyServices TV - شاشتك لمشاهده المباريات"
 publish_to: 'none'
-version: 1.1.0+7
+version: 1.1.5+17
 
 environment:
   sdk: ^3.9.0
