@@ -1,5 +1,7 @@
+import 'dart:io' show Platform;
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/app_config.dart';
@@ -31,6 +33,10 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _isConnecting = false;
   String? _errorMessage;
 
+  /// على iOS/iPad نستعمل system keyboard الطبيعي (touch UX).
+  /// TvKeyboard المخصّص يبقى لـAndroid TV + Desktop (D-pad UX).
+  bool get _useSystemKeyboard => !kIsWeb && Platform.isIOS;
+
   @override
   void initState() {
     super.initState();
@@ -50,25 +56,29 @@ class _SetupScreenState extends State<SetupScreen> {
     });
 
     // D-pad center / Enter on each field opens the TV keyboard dialog.
-    _bindTvKeyboard(
-      _serverFocus,
-      _serverController,
-      'عنوان السيرفر',
-      next: _usernameFocus,
-    );
-    _bindTvKeyboard(
-      _usernameFocus,
-      _usernameController,
-      'اسم المستخدم',
-      next: _passwordFocus,
-    );
-    _bindTvKeyboard(
-      _passwordFocus,
-      _passwordController,
-      'كلمة المرور',
-      next: _connectFocus,
-      obscure: true,
-    );
+    // على iOS/iPad نتخطى هذا كلياً — system keyboard الطبيعي يظهر
+    // مباشرة لما يضغط المستخدم على الحقل.
+    if (!_useSystemKeyboard) {
+      _bindTvKeyboard(
+        _serverFocus,
+        _serverController,
+        'عنوان السيرفر',
+        next: _usernameFocus,
+      );
+      _bindTvKeyboard(
+        _usernameFocus,
+        _usernameController,
+        'اسم المستخدم',
+        next: _passwordFocus,
+      );
+      _bindTvKeyboard(
+        _passwordFocus,
+        _passwordController,
+        'كلمة المرور',
+        next: _connectFocus,
+        obscure: true,
+      );
+    }
   }
 
   void _bindTvKeyboard(
@@ -419,12 +429,18 @@ class _SetupScreenState extends State<SetupScreen> {
     return TextFormField(
       controller: controller,
       focusNode: focusNode,
-      readOnly: true,
-      showCursor: false,
-      enableInteractiveSelection: false,
+      // iOS/iPad → system keyboard مباشر (readOnly=false).
+      // Android TV/Desktop → readOnly + onTap يفتح TvKeyboard المخصّص.
+      readOnly: !_useSystemKeyboard,
+      showCursor: _useSystemKeyboard,
+      enableInteractiveSelection: _useSystemKeyboard,
       obscureText: obscureText,
       autofocus: autofocus,
-      onTap: onTap,
+      onTap: _useSystemKeyboard ? null : onTap,
+      keyboardType: _useSystemKeyboard
+          ? (obscureText ? TextInputType.visiblePassword : TextInputType.url)
+          : null,
+      textInputAction: _useSystemKeyboard ? TextInputAction.next : null,
       style: AppFonts.cairo(color: Colors.white, fontSize: 15),
       textDirection: TextDirection.ltr,
       validator: validator,
