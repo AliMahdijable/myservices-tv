@@ -52,7 +52,6 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>audio</string>
 		<string>fetch</string>
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
