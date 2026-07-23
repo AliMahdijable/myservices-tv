@@ -342,15 +342,6 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'MyServices TV',
-                  style: AppFonts.cairo(
-                    color: AppColors.textPrimary,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                  ),
-                ),
-                Text(
                   'شاشتك لمشاهدة المباريات',
                   style: AppFonts.cairo(
                     color: AppColors.textMuted,

@@ -228,19 +228,6 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 30),
-                  FadeTransition(
-                    opacity: _fadeAnimation,
-                    child: Text(
-                      'MyServices TV',
-                      style: AppFonts.cairo(
-                        fontSize: 34,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                  ),
                   const Spacer(flex: 3),
                   FadeTransition(
                     opacity: _textFadeAnimation,

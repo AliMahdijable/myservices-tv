@@ -343,16 +343,6 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          'MyServices TV',
-          style: AppFonts.cairo(
-            color: AppColors.textPrimary,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
           'أدخل بيانات سيرفر IPTV الخاص بك',
           style: AppFonts.cairo(color: AppColors.textMuted, fontSize: 14),
           textDirection: TextDirection.rtl,
