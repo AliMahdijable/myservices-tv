@@ -1,7 +1,7 @@
 name: myservices_tv
-description: "MyServices TV - شاشتك لمشاهده المباريات"
+description: "IPTV Player — watch live TV channels on your device"
 publish_to: 'none'
-version: 1.1.6+18
+version: 1.1.7+20
 
 environment:
   sdk: ^3.9.0
