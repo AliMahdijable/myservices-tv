@@ -9,7 +9,7 @@
     <uses-feature android:name="android.software.leanback" android:required="false"/>
 
     <application
-        android:label="MyServices TV"
+        android:label="IPTV Player"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"

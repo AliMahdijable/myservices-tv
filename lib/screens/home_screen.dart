@@ -544,7 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'جميع الحقوق محفوظة لمجموعة خدماتي $year ©',
+            'جميع الحقوق محفوظة $year ©',
             style: AppFonts.cairo(color: AppColors.textMuted, fontSize: 12),
             textDirection: TextDirection.rtl,
           ),
