@@ -48,16 +48,19 @@ class FixturesService {
       throw Exception('فشل جلب جدول المباريات: ${response.statusCode}');
     }
 
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    final decoded = jsonDecode(
+      utf8.decode(response.bodyBytes, allowMalformed: true),
+    );
     if (decoded is! Map || decoded['response'] is! List) {
       throw Exception('استجابة جدول المباريات غير صالحة');
     }
 
-    final fixtures = (decoded['response'] as List)
-        .whereType<Map<String, dynamic>>()
-        .map(Fixture.fromJson)
-        .toList()
-      ..sort((a, b) => a.kickoff.compareTo(b.kickoff));
+    final fixtures =
+        (decoded['response'] as List)
+            .whereType<Map<String, dynamic>>()
+            .map(Fixture.fromJson)
+            .toList()
+          ..sort((a, b) => a.kickoff.compareTo(b.kickoff));
 
     await _cache(fixtures);
     return fixtures;
@@ -96,17 +99,26 @@ class FixturesService {
     if (keywords == null) return null;
 
     for (final category in categories) {
-      final nameLower = category.name.toLowerCase();
-      final displayLower = category.displayName.toLowerCase();
       final matches = keywords.any(
         (keyword) =>
-            nameLower.contains(keyword) || displayLower.contains(keyword),
+            _containsKeyword(category.name, keyword) ||
+            _containsKeyword(category.displayName, keyword),
       );
       if (matches && category.channels.isNotEmpty) {
         return category.channels.first;
       }
     }
     return null;
+  }
+
+  // Letter-boundary match: 'ssc' matches "SSC1"/"SSC News" (digits/spaces
+  // aren't letters) but not a coincidental substring inside another word;
+  // same for a short/common word like 'بين' against Arabic category names.
+  static bool _containsKeyword(String text, String keyword) {
+    final pattern = RegExp(
+      '(?<![a-zء-ي])${RegExp.escape(keyword.toLowerCase())}(?![a-zء-ي])',
+    );
+    return pattern.hasMatch(text.toLowerCase());
   }
 
   // ── Cache ────────────────────────────────────────────────────────────────

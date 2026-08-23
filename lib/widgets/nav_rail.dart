@@ -32,11 +32,7 @@ class NavRail extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _RailItem(
-            icon: Icons.home_rounded,
-            label: 'الرئيسية',
-            active: true,
-          ),
+          _RailItem(icon: Icons.home_rounded, label: 'الرئيسية', active: true),
           const SizedBox(height: 18),
           _RailItem(
             icon: Icons.search_rounded,

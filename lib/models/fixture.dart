@@ -48,10 +48,14 @@ class Fixture {
     'AWD',
     'WO',
   };
+  // Postponed/cancelled/abandoned/undetermined — not upcoming (the kickoff
+  // time is stale/moot) and not finished (no real result to show).
+  static const Set<String> _cancelledStatuses = {'PST', 'CANC', 'ABD', 'TBD'};
 
   bool get isLive => _liveStatuses.contains(status);
   bool get isFinished => _finishedStatuses.contains(status);
-  bool get isUpcoming => !isLive && !isFinished;
+  bool get isCancelled => _cancelledStatuses.contains(status);
+  bool get isUpcoming => !isLive && !isFinished && !isCancelled;
 
   factory Fixture.fromJson(Map<String, dynamic> json) {
     final fixtureJson = json['fixture'] as Map<String, dynamic>? ?? const {};
@@ -101,7 +105,8 @@ class Fixture {
 
   factory Fixture.fromCacheJson(Map<String, dynamic> json) => Fixture(
     id: json['id'] as int? ?? 0,
-    kickoff: DateTime.tryParse(json['kickoff']?.toString() ?? '') ?? DateTime.now(),
+    kickoff:
+        DateTime.tryParse(json['kickoff']?.toString() ?? '') ?? DateTime.now(),
     status: json['status']?.toString() ?? 'NS',
     elapsedMinutes: json['elapsedMinutes'] as int?,
     league: json['league']?.toString() ?? '',

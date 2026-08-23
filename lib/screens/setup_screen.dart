@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../config/app_config.dart';
 import '../services/xtream_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/focusable_icon_button.dart';
 import '../widgets/tv_keyboard.dart';
 import 'splash_screen.dart';
 
@@ -39,8 +40,7 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _useSystemKeyboard(BuildContext context) {
     if (kIsWeb) return false;
     if (Platform.isIOS) return true;
-    return Platform.isAndroid &&
-        MediaQuery.sizeOf(context).shortestSide < 600;
+    return Platform.isAndroid && MediaQuery.sizeOf(context).shortestSide < 600;
   }
 
   @override
@@ -252,58 +252,80 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Reached two ways: from SplashScreen on first run (pushReplacement --
+    // nothing to pop to) or from Home's Settings nav (push -- has a back
+    // target). Only show the back button when there's somewhere to go.
+    final canPop = Navigator.of(context).canPop();
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: AppColors.backgroundGradient),
         child: SafeArea(
-          child: FocusTraversalGroup(
-            policy: WidgetOrderTraversalPolicy(),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 850;
-                final minimumHeight = max(0.0, constraints.maxHeight - 48);
-                return SingleChildScrollView(
-                  physics: const ClampingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 24,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: minimumHeight),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1080),
-                        child: wide
-                            ? Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Expanded(child: _buildLogo()),
-                                  const SizedBox(width: 56),
-                                  SizedBox(
-                                    width: 480,
-                                    child: _buildFormPanel(),
-                                  ),
-                                ],
-                              )
-                            : ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 480,
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    _buildLogo(),
-                                    const SizedBox(height: 32),
-                                    _buildFormPanel(),
-                                  ],
-                                ),
-                              ),
+          minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Stack(
+            children: [
+              FocusTraversalGroup(
+                policy: WidgetOrderTraversalPolicy(),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 850;
+                    final minimumHeight = max(0.0, constraints.maxHeight - 48);
+                    return SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 24,
                       ),
-                    ),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: minimumHeight),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1080),
+                            child: wide
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Expanded(child: _buildLogo()),
+                                      const SizedBox(width: 56),
+                                      SizedBox(
+                                        width: 480,
+                                        child: _buildFormPanel(),
+                                      ),
+                                    ],
+                                  )
+                                : ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 480,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _buildLogo(),
+                                        const SizedBox(height: 32),
+                                        _buildFormPanel(),
+                                      ],
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (canPop)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: FocusableIconButton(
+                    icon: Icons.arrow_back_rounded,
+                    semanticLabel: 'رجوع',
+                    iconSize: 22,
+                    onTap: () => Navigator.of(context).pop(),
                   ),
-                );
-              },
-            ),
+                ),
+            ],
           ),
         ),
       ),

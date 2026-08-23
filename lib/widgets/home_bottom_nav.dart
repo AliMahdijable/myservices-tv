@@ -20,38 +20,41 @@ class HomeBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 62,
-      decoration: BoxDecoration(
-        color: AppColors.primaryDark.withValues(alpha: 0.96),
-        border: Border(
-          top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 62,
+        decoration: BoxDecoration(
+          color: AppColors.primaryDark.withValues(alpha: 0.96),
+          border: Border(
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+          ),
         ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _BottomNavItem(
-            icon: Icons.home_rounded,
-            label: 'الرئيسية',
-            active: true,
-          ),
-          _BottomNavItem(
-            icon: Icons.search_rounded,
-            label: 'بحث',
-            onTap: searchEnabled ? onSearchTap : null,
-          ),
-          _BottomNavItem(
-            icon: Icons.sports_soccer_rounded,
-            label: 'المباريات',
-            onTap: onFixturesTap,
-          ),
-          _BottomNavItem(
-            icon: Icons.settings_rounded,
-            label: 'الإعدادات',
-            onTap: onSettingsTap,
-          ),
-        ],
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _BottomNavItem(
+              icon: Icons.home_rounded,
+              label: 'الرئيسية',
+              active: true,
+            ),
+            _BottomNavItem(
+              icon: Icons.search_rounded,
+              label: 'بحث',
+              onTap: searchEnabled ? onSearchTap : null,
+            ),
+            _BottomNavItem(
+              icon: Icons.sports_soccer_rounded,
+              label: 'المباريات',
+              onTap: onFixturesTap,
+            ),
+            _BottomNavItem(
+              icon: Icons.settings_rounded,
+              label: 'الإعدادات',
+              onTap: onSettingsTap,
+            ),
+          ],
+        ),
       ),
     );
   }

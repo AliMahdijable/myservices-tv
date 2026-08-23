@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../models/channel.dart';
 import '../theme/app_theme.dart';
 import '../utils/search_helpers.dart';
+import '../widgets/focusable_icon_button.dart';
 import '../widgets/tv_keyboard.dart';
 import 'player_screen.dart';
 
@@ -38,8 +39,7 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _useSystemKeyboard(BuildContext context) {
     if (kIsWeb) return false;
     if (Platform.isIOS) return true;
-    return Platform.isAndroid &&
-        MediaQuery.sizeOf(context).shortestSide < 600;
+    return Platform.isAndroid && MediaQuery.sizeOf(context).shortestSide < 600;
   }
 
   @override
@@ -145,7 +145,12 @@ class _SearchScreenState extends State<SearchScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          _BackButton(onTap: () => Navigator.of(context).pop()),
+          FocusableIconButton(
+            icon: Icons.arrow_back_rounded,
+            semanticLabel: 'رجوع',
+            iconSize: 22,
+            onTap: () => Navigator.of(context).pop(),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Focus(
@@ -346,61 +351,6 @@ TraversalDirection? _directionForKey(LogicalKeyboardKey key) {
   if (key == LogicalKeyboardKey.arrowLeft) return TraversalDirection.left;
   if (key == LogicalKeyboardKey.arrowRight) return TraversalDirection.right;
   return null;
-}
-
-class _BackButton extends StatefulWidget {
-  final VoidCallback onTap;
-
-  const _BackButton({required this.onTap});
-
-  @override
-  State<_BackButton> createState() => _BackButtonState();
-}
-
-class _BackButtonState extends State<_BackButton> {
-  bool _focused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'رجوع',
-      onTap: widget.onTap,
-      excludeSemantics: true,
-      child: Focus(
-        onFocusChange: (focused) => setState(() => _focused = focused),
-        onKeyEvent: (_, event) {
-          if (event is KeyDownEvent && _isActivationKey(event.logicalKey)) {
-            widget.onTap();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: _focused ? AppColors.accentRed : AppColors.surfaceDark,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _focused
-                    ? AppColors.accentRedLight
-                    : Colors.white.withValues(alpha: 0.06),
-              ),
-            ),
-            child: const Icon(
-              Icons.arrow_back_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _SearchCard extends StatefulWidget {

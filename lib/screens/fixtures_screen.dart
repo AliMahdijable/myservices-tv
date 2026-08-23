@@ -8,6 +8,7 @@ import '../models/channel.dart';
 import '../models/fixture.dart';
 import '../services/fixtures_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/focusable_icon_button.dart';
 import 'player_screen.dart';
 
 class FixturesScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
   List<Fixture> _fixtures = const [];
   String? _errorMessage;
   bool _openingPlayer = false;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -34,7 +36,14 @@ class _FixturesScreenState extends State<FixturesScreen> {
   }
 
   Future<void> _load({bool forceRefresh = false}) async {
-    setState(() => _state = _LoadState.loading);
+    final refreshInPlace = forceRefresh && _fixtures.isNotEmpty;
+    setState(() {
+      if (refreshInPlace) {
+        _isRefreshing = true;
+      } else {
+        _state = _LoadState.loading;
+      }
+    });
     try {
       final fixtures = await FixturesService.fetchTodayFixtures(
         forceRefresh: forceRefresh,
@@ -43,16 +52,38 @@ class _FixturesScreenState extends State<FixturesScreen> {
       setState(() {
         _fixtures = fixtures;
         _state = _LoadState.loaded;
+        _isRefreshing = false;
       });
     } on FixturesNotConfiguredException {
       if (!mounted) return;
-      setState(() => _state = _LoadState.notConfigured);
+      setState(() {
+        _state = _LoadState.notConfigured;
+        _isRefreshing = false;
+      });
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'تعذّر تحميل جدول المباريات';
-        _state = _LoadState.error;
-      });
+      if (refreshInPlace) {
+        setState(() => _isRefreshing = false);
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'تعذّر تحديث جدول المباريات',
+                textAlign: TextAlign.center,
+                style: AppFonts.cairo(color: Colors.white, fontSize: 14),
+              ),
+              backgroundColor: AppColors.surfaceDark,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      } else {
+        setState(() {
+          _errorMessage = 'تعذّر تحميل جدول المباريات';
+          _state = _LoadState.error;
+          _isRefreshing = false;
+        });
+      }
     }
   }
 
@@ -96,9 +127,11 @@ class _FixturesScreenState extends State<FixturesScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          _BarIconButton(
+          FocusableIconButton(
             icon: Icons.arrow_back_rounded,
             semanticLabel: 'رجوع',
+            autofocus: true,
+            iconSize: 22,
             onTap: () => Navigator.of(context).pop(),
           ),
           const SizedBox(width: 12),
@@ -113,10 +146,12 @@ class _FixturesScreenState extends State<FixturesScreen> {
               textDirection: TextDirection.rtl,
             ),
           ),
-          _BarIconButton(
+          FocusableIconButton(
             icon: Icons.refresh_rounded,
             semanticLabel: 'تحديث الجدول',
-            onTap: _state == _LoadState.loading
+            isLoading: _isRefreshing,
+            iconSize: 22,
+            onTap: (_state == _LoadState.loading || _isRefreshing)
                 ? null
                 : () => _load(forceRefresh: true),
           ),
@@ -188,7 +223,10 @@ class _FixturesScreenState extends State<FixturesScreen> {
               body,
               textAlign: TextAlign.center,
               textDirection: TextDirection.rtl,
-              style: AppFonts.cairo(color: AppColors.textSecondary, fontSize: 14),
+              style: AppFonts.cairo(
+                color: AppColors.textSecondary,
+                fontSize: 14,
+              ),
             ),
             if (showRetry) ...[
               const SizedBox(height: 20),
@@ -238,15 +276,50 @@ class _FixturesScreenState extends State<FixturesScreen> {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          if (widget.categories.isEmpty) _buildChannelsNotLoadedHint(),
           if (live.isNotEmpty) _buildSection('مباشر الآن', live),
           if (upcoming.isNotEmpty) _buildSection('مباريات قادمة', upcoming),
-          if (finished.isNotEmpty) _buildSection('انتهت', finished, muted: true),
+          if (finished.isNotEmpty)
+            _buildSection('انتهت', finished, muted: true),
         ],
       ),
     );
   }
 
-  Widget _buildSection(String title, List<Fixture> fixtures, {bool muted = false}) {
+  Widget _buildChannelsNotLoadedHint() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceDark.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: AppColors.textMuted,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'لم تُحمَّل قنواتك بعد، فلن تظهر أزرار "شاهد" حتى تحميلها',
+              style: AppFonts.cairo(color: AppColors.textMuted, fontSize: 12),
+              textDirection: TextDirection.rtl,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSection(
+    String title,
+    List<Fixture> fixtures, {
+    bool muted = false,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -264,84 +337,13 @@ class _FixturesScreenState extends State<FixturesScreen> {
         ),
         for (final fixture in fixtures)
           _FixtureRow(
+            key: ValueKey<int>(fixture.id),
             fixture: fixture,
             channel: FixturesService.suggestChannel(fixture, widget.categories),
             muted: muted,
             onWatch: _openPlayer,
           ),
       ],
-    );
-  }
-}
-
-class _BarIconButton extends StatefulWidget {
-  final IconData icon;
-  final String semanticLabel;
-  final VoidCallback? onTap;
-
-  const _BarIconButton({
-    required this.icon,
-    required this.semanticLabel,
-    this.onTap,
-  });
-
-  @override
-  State<_BarIconButton> createState() => _BarIconButtonState();
-}
-
-class _BarIconButtonState extends State<_BarIconButton> {
-  bool _isFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.onTap != null;
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      label: widget.semanticLabel,
-      child: Focus(
-        canRequestFocus: enabled,
-        skipTraversal: !enabled,
-        onFocusChange: (focused) {
-          if (_isFocused != focused) setState(() => _isFocused = focused);
-        },
-        onKeyEvent: (node, event) {
-          if (enabled &&
-              event is KeyDownEvent &&
-              (event.logicalKey == LogicalKeyboardKey.select ||
-                  event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-            widget.onTap!.call();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: _isFocused ? AppColors.accentRed : AppColors.surfaceDark,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _isFocused
-                    ? AppColors.accentRedLight
-                    : Colors.white.withValues(alpha: 0.06),
-                width: _isFocused ? 2 : 1,
-              ),
-            ),
-            child: Icon(
-              widget.icon,
-              color: enabled
-                  ? (_isFocused ? Colors.white : AppColors.textSecondary)
-                  : Colors.white30,
-              size: 22,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -353,6 +355,7 @@ class _FixtureRow extends StatefulWidget {
   final ValueChanged<Channel> onWatch;
 
   const _FixtureRow({
+    super.key,
     required this.fixture,
     required this.channel,
     required this.muted,
@@ -400,8 +403,13 @@ class _FixtureRowState extends State<_FixtureRow> {
         ),
         if (fixture.isLive)
           Text(
-            fixture.elapsedMinutes != null ? "'${fixture.elapsedMinutes}" : 'مباشر',
-            style: AppFonts.cairo(color: AppColors.accentRedLight, fontSize: 10),
+            fixture.elapsedMinutes != null
+                ? "'${fixture.elapsedMinutes}"
+                : 'مباشر',
+            style: AppFonts.cairo(
+              color: AppColors.accentRedLight,
+              fontSize: 10,
+            ),
           ),
       ],
     );
@@ -418,10 +426,17 @@ class _FixtureRowState extends State<_FixtureRow> {
                 ? CachedNetworkImage(
                     imageUrl: logoUrl,
                     fit: BoxFit.contain,
-                    errorWidget: (_, __, ___) =>
-                        const Icon(Icons.shield_outlined, color: Colors.white38, size: 20),
+                    errorWidget: (_, __, ___) => const Icon(
+                      Icons.shield_outlined,
+                      color: Colors.white38,
+                      size: 20,
+                    ),
                   )
-                : const Icon(Icons.shield_outlined, color: Colors.white38, size: 20),
+                : const Icon(
+                    Icons.shield_outlined,
+                    color: Colors.white38,
+                    size: 20,
+                  ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -450,7 +465,9 @@ class _FixtureRowState extends State<_FixtureRow> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: AppColors.surfaceDark.withValues(alpha: widget.muted ? 0.4 : 0.7),
+          color: AppColors.surfaceDark.withValues(
+            alpha: widget.muted ? 0.4 : 0.7,
+          ),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         ),
@@ -471,7 +488,10 @@ class _FixtureRowState extends State<_FixtureRow> {
                     fixture.league,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppFonts.cairo(color: AppColors.textMuted, fontSize: 11),
+                    style: AppFonts.cairo(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                    ),
                     textDirection: TextDirection.rtl,
                   ),
                 ),
@@ -535,7 +555,11 @@ class _WatchButton extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 14),
+                const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 14,
+                ),
                 const SizedBox(width: 3),
                 Text(
                   'شاهد',

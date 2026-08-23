@@ -8,6 +8,7 @@ import '../models/channel.dart';
 import '../services/channel_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_section.dart';
+import '../widgets/focusable_icon_button.dart';
 import '../widgets/nav_rail.dart';
 import '../widgets/home_bottom_nav.dart';
 import 'fixtures_screen.dart';
@@ -147,14 +148,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openFixtures() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => FixturesScreen(categories: _categories),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) =>
+                FixturesScreen(categories: _categories),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) {
+          if (mounted) unawaited(_loadDynamicData());
+        });
   }
 
   void _openSettings() {
@@ -428,7 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          _FocusableIconButton(
+          FocusableIconButton(
             icon: Icons.refresh_rounded,
             semanticLabel: 'تحديث القنوات',
             isLoading: _isRefreshing,
@@ -799,104 +805,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FocusableIconButton extends StatefulWidget {
-  final IconData icon;
-  final String semanticLabel;
-  final bool isLoading;
-  final VoidCallback? onTap;
-
-  const _FocusableIconButton({
-    required this.icon,
-    required this.semanticLabel,
-    this.isLoading = false,
-    this.onTap,
-  });
-
-  @override
-  State<_FocusableIconButton> createState() => _FocusableIconButtonState();
-}
-
-class _FocusableIconButtonState extends State<_FocusableIconButton> {
-  bool _isFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.onTap != null && !widget.isLoading;
-
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      label: widget.semanticLabel,
-      value: widget.isLoading ? 'جارٍ التحديث' : null,
-      child: Focus(
-        canRequestFocus: enabled,
-        skipTraversal: !enabled,
-        onFocusChange: (focused) {
-          if (_isFocused != focused) {
-            setState(() => _isFocused = focused);
-          }
-        },
-        onKeyEvent: (node, event) {
-          if (enabled &&
-              event is KeyDownEvent &&
-              (event.logicalKey == LogicalKeyboardKey.select ||
-                  event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-            widget.onTap!.call();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: GestureDetector(
-          onTap: enabled ? widget.onTap : null,
-          child: AnimatedOpacity(
-            opacity: enabled || widget.isLoading ? 1 : 0.42,
-            duration: const Duration(milliseconds: 150),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: _isFocused ? AppColors.accentRed : AppColors.surfaceDark,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _isFocused
-                      ? AppColors.accentRedLight
-                      : Colors.white.withValues(alpha: 0.06),
-                  width: _isFocused ? 2 : 1,
-                ),
-                boxShadow: _isFocused
-                    ? [
-                        BoxShadow(
-                          color: AppColors.accentRed.withValues(alpha: 0.4),
-                          blurRadius: 12,
-                        ),
-                      ]
-                    : [],
-              ),
-              child: widget.isLoading
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(
-                      widget.icon,
-                      color: _isFocused
-                          ? Colors.white
-                          : AppColors.textSecondary,
-                      size: 24,
-                    ),
-            ),
-          ),
         ),
       ),
     );
