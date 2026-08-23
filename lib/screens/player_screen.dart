@@ -250,6 +250,16 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
 
     _errorSub = _player.stream.error.listen((message) {
       debugPrint('[Player] stream error: ${_redactLog(message)}');
+      // media_kit forwards any mpv log message at its internal 'error'
+      // severity (file/ffmpeg/vd/ad/cplayer/stream prefixes) onto this
+      // stream verbatim -- 'error' sits below mpv's own 'fatal' level and
+      // does not itself mean playback stopped. mpv runs an automatic
+      // seekability/duration probe on every open (unrelated to any user
+      // action -- this screen has no seek UI at all); it fails harmlessly
+      // on live feeds and logs exactly this, while playback keeps running.
+      // Confirmed against media_kit's own source (real.dart, MPV_EVENT_LOG_
+      // MESSAGE handling) -- do not treat it as a fatal stream failure.
+      if (message.contains('Cannot seek in this stream')) return;
       if (mounted) {
         _handleStreamError(_playbackSessionId, _currentAttemptId);
       }
