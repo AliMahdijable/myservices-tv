@@ -8,6 +8,8 @@ import '../models/channel.dart';
 import '../services/channel_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_section.dart';
+import '../widgets/nav_rail.dart';
+import '../widgets/home_bottom_nav.dart';
 import 'player_screen.dart';
 import 'setup_screen.dart';
 import 'search_screen.dart';
@@ -284,8 +286,28 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Rail navigation below this width doesn't leave enough room for content;
+  // a bottom nav bar (mobile-native pattern) is used instead.
+  static const double _railBreakpoint = 700;
+
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= _railBreakpoint;
+    final content = Column(
+      children: [
+        _buildAppBar(),
+        Expanded(
+          child: _isLoading
+              ? _buildLoadingShimmer()
+              : _errorMessage != null
+              ? _buildErrorView()
+              : _categories.isEmpty
+              ? _buildEmptyView()
+              : _buildChannelsList(),
+        ),
+      ],
+    );
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -299,22 +321,28 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           child: SafeArea(
             minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Column(
-              children: [
-                _buildAppBar(),
-                Expanded(
-                  child: _isLoading
-                      ? _buildLoadingShimmer()
-                      : _errorMessage != null
-                      ? _buildErrorView()
-                      : _categories.isEmpty
-                      ? _buildEmptyView()
-                      : _buildChannelsList(),
-                ),
-              ],
-            ),
+            bottom: isWide,
+            child: isWide
+                ? Row(
+                    children: [
+                      Expanded(child: content),
+                      NavRail(
+                        searchEnabled: _categories.isNotEmpty,
+                        onSearchTap: _openSearch,
+                        onSettingsTap: _openSettings,
+                      ),
+                    ],
+                  )
+                : content,
           ),
         ),
+        bottomNavigationBar: isWide
+            ? null
+            : HomeBottomNav(
+                searchEnabled: _categories.isNotEmpty,
+                onSearchTap: _openSearch,
+                onSettingsTap: _openSettings,
+              ),
       ),
     );
   }
@@ -387,24 +415,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           _FocusableIconButton(
-            icon: Icons.search_rounded,
-            semanticLabel: 'البحث عن قناة',
-            onTap: _categories.isNotEmpty ? _openSearch : null,
-          ),
-          const SizedBox(width: 6),
-          _FocusableIconButton(
             icon: Icons.refresh_rounded,
             semanticLabel: 'تحديث القنوات',
             isLoading: _isRefreshing,
             onTap: _isRefreshing || _isLoading
                 ? null
                 : () => _loadChannels(forceRefresh: true),
-          ),
-          const SizedBox(width: 6),
-          _FocusableIconButton(
-            icon: Icons.settings_rounded,
-            semanticLabel: 'إعدادات مصدر القنوات',
-            onTap: _openSettings,
           ),
         ],
       ),
