@@ -8,14 +8,12 @@ import '../theme/app_theme.dart';
 class NavRail extends StatelessWidget {
   final bool searchEnabled;
   final VoidCallback onSearchTap;
-  final VoidCallback onFixturesTap;
   final VoidCallback onSettingsTap;
 
   const NavRail({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
-    required this.onFixturesTap,
     required this.onSettingsTap,
   });
 
@@ -38,12 +36,6 @@ class NavRail extends StatelessWidget {
             icon: Icons.search_rounded,
             label: 'بحث',
             onTap: searchEnabled ? onSearchTap : null,
-          ),
-          const SizedBox(height: 18),
-          _RailItem(
-            icon: Icons.sports_soccer_rounded,
-            label: 'المباريات',
-            onTap: onFixturesTap,
           ),
           const Spacer(),
           _RailItem(

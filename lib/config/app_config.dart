@@ -160,10 +160,4 @@ class AppConfig {
   // Sent on every HTTP request (playlist/category discovery and playback
   // alike) — some IPTV providers reject requests with no User-Agent at all.
   static const String userAgent = 'Mozilla/5.0 IPTV Player';
-
-  // ── Match schedule (optional) ───────────────────────────────────────────
-  // Free key from https://dashboard.api-football.com (100 req/day on the
-  // free tier). Paste it here to enable "جدول المباريات". Left empty, that
-  // section shows a "not configured" state instead of erroring.
-  static const String fixturesApiKey = '';
 }
