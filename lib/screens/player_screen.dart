@@ -74,12 +74,18 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   bool _mpvConfigApplied = true;
   bool _wasPlayingBeforeBackground = true;
 
-  // A freshly opened HLS stream can report a spurious "completed" while its
-  // manifest is still warming up — a live stream cannot have legitimately
-  // ended moments after being opened. Give each attempt a grace window
-  // before treating a completed signal as real.
+  // A freshly opened stream can misbehave during startup in ways that
+  // self-correct almost immediately: mpv/HLS can report a spurious
+  // "completed" while the manifest is still warming up, and a hardware
+  // decoder can glitch (e.g. a brief green/garbage frame) and report an
+  // error on the first frame or two. Give each attempt a warm-up window
+  // where this is expected and recoverable rather than a real failure.
   DateTime? _attemptStartedAt;
-  static const Duration _completedGracePeriod = Duration(seconds: 5);
+  static const Duration _attemptWarmupPeriod = Duration(seconds: 5);
+  // One free, silent retry per channel open for anything that fails during
+  // the warm-up window — shown to the user as continued loading, not a
+  // "reconnecting" state. A second failure (warmup or not) is real.
+  int _silentRetriesRemaining = 0;
 
   // Every channel change creates a new session. Delayed callbacks from an old
   // stream are ignored instead of reconnecting the newly selected channel.
@@ -259,7 +265,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
       }
       final startedAt = _attemptStartedAt;
       if (startedAt != null &&
-          DateTime.now().difference(startedAt) < _completedGracePeriod) {
+          DateTime.now().difference(startedAt) < _attemptWarmupPeriod) {
         return;
       }
       final sessionId = _playbackSessionId;
@@ -416,6 +422,20 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     // Coalesce duplicate mpv error/completed events into one reconnect.
     if (_reconnectTimer?.isActive ?? false) return;
 
+    if (_silentRetriesRemaining > 0 &&
+        _attemptStartedAt != null &&
+        DateTime.now().difference(_attemptStartedAt!) < _attemptWarmupPeriod) {
+      _silentRetriesRemaining--;
+      setState(() => _isBuffering = true);
+      _reconnectTimer = Timer(const Duration(milliseconds: 400), () {
+        _reconnectTimer = null;
+        if (mounted && sessionId == _playbackSessionId) {
+          unawaited(_doPlayChannel(_currentChannel, sessionId));
+        }
+      });
+      return;
+    }
+
     if (_retryCount >= _maxRetries) {
       setState(() {
         _hasError = true;
@@ -452,6 +472,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     _stablePlaybackTimer?.cancel();
     _completedTimer?.cancel();
     _retryCount = 0;
+    _silentRetriesRemaining = 1;
     _handledFailureAttemptId = null;
     _preferAlternateUrl = false;
     _currentAttemptUsesAlternateUrl = false;
