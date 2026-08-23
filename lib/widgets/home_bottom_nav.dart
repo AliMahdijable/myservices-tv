@@ -7,12 +7,14 @@ import '../theme/app_theme.dart';
 class HomeBottomNav extends StatelessWidget {
   final bool searchEnabled;
   final VoidCallback onSearchTap;
+  final VoidCallback onFixturesTap;
   final VoidCallback onSettingsTap;
 
   const HomeBottomNav({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
+    required this.onFixturesTap,
     required this.onSettingsTap,
   });
 
@@ -38,6 +40,11 @@ class HomeBottomNav extends StatelessWidget {
             icon: Icons.search_rounded,
             label: 'بحث',
             onTap: searchEnabled ? onSearchTap : null,
+          ),
+          _BottomNavItem(
+            icon: Icons.sports_soccer_rounded,
+            label: 'المباريات',
+            onTap: onFixturesTap,
           ),
           _BottomNavItem(
             icon: Icons.settings_rounded,

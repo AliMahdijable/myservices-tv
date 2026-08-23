@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/category_section.dart';
 import '../widgets/nav_rail.dart';
 import '../widgets/home_bottom_nav.dart';
+import 'fixtures_screen.dart';
 import 'player_screen.dart';
 import 'setup_screen.dart';
 import 'search_screen.dart';
@@ -143,6 +144,17 @@ class _HomeScreenState extends State<HomeScreen> {
           _openingPlayer = false;
           if (mounted) unawaited(_loadDynamicData());
         });
+  }
+
+  void _openFixtures() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => FixturesScreen(categories: _categories),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 200),
+      ),
+    );
   }
 
   void _openSettings() {
@@ -329,6 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       NavRail(
                         searchEnabled: _categories.isNotEmpty,
                         onSearchTap: _openSearch,
+                        onFixturesTap: _openFixtures,
                         onSettingsTap: _openSettings,
                       ),
                     ],
@@ -341,6 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : HomeBottomNav(
                 searchEnabled: _categories.isNotEmpty,
                 onSearchTap: _openSearch,
+                onFixturesTap: _openFixtures,
                 onSettingsTap: _openSettings,
               ),
       ),
