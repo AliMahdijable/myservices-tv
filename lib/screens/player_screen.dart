@@ -383,6 +383,14 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
         return;
       }
 
+      // Not buffering this tick: let the penalty decay instead of only
+      // clearing it on a full 12s-stability signal. A stream with a
+      // persistent-but-tolerable stutter (buffer a few seconds, play a
+      // few, repeat) never holds 12 clean seconds, so without decay this
+      // budget climbs across cycles and forces a needless reconnect on a
+      // stream that is actually still delivering video.
+      if (_bufferedSeconds > 0) _bufferedSeconds--;
+
       if (_player.state.playing && !_player.state.completed) {
         final position = _player.state.position;
         if (position > _lastKnownPosition) {
