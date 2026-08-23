@@ -74,6 +74,13 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   bool _mpvConfigApplied = true;
   bool _wasPlayingBeforeBackground = true;
 
+  // A freshly opened HLS stream can report a spurious "completed" while its
+  // manifest is still warming up — a live stream cannot have legitimately
+  // ended moments after being opened. Give each attempt a grace window
+  // before treating a completed signal as real.
+  DateTime? _attemptStartedAt;
+  static const Duration _completedGracePeriod = Duration(seconds: 5);
+
   // Every channel change creates a new session. Delayed callbacks from an old
   // stream are ignored instead of reconnecting the newly selected channel.
   int _playbackSessionId = 0;
@@ -248,6 +255,11 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
       if (!mounted) return;
       if (!completed) {
         _completedTimer?.cancel();
+        return;
+      }
+      final startedAt = _attemptStartedAt;
+      if (startedAt != null &&
+          DateTime.now().difference(startedAt) < _completedGracePeriod) {
         return;
       }
       final sessionId = _playbackSessionId;
@@ -468,6 +480,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     if (!mounted || sessionId != _playbackSessionId) return;
     final attemptId = ++_currentAttemptId;
     _handledFailureAttemptId = null;
+    _attemptStartedAt = DateTime.now();
     _startBufferWatchdog(sessionId, attemptId);
 
     // After 2 consecutive failures, try alternate format (.m3u8 ↔ .ts).
