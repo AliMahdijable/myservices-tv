@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/app_config.dart';
+import '../services/channel_service.dart';
 import '../services/xtream_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/focusable_icon_button.dart';
@@ -165,6 +166,11 @@ class _SetupScreenState extends State<SetupScreen> {
         username: username,
         password: password,
       );
+      // The channel cache key isn't scoped to the server/account -- without
+      // clearing it, switching to different credentials would silently keep
+      // showing whatever was cached from the previous server for up to
+      // cacheDuration (6h), ignoring the new ones entirely.
+      await ChannelService.clearCache();
       await _navigateToHome();
     } else {
       // Xtream check failed — still save and let the app try M3U fallback
@@ -175,6 +181,7 @@ class _SetupScreenState extends State<SetupScreen> {
           username: username,
           password: password,
         );
+        await ChannelService.clearCache();
         await _navigateToHome();
       } else {
         setState(() {
