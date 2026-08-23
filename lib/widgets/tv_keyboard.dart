@@ -179,20 +179,26 @@ class _TvKeyboardState extends State<TvKeyboard> {
             const SizedBox(height: 12),
             FocusTraversalGroup(
               policy: WidgetOrderTraversalPolicy(),
-              child: Column(
-                children: [
-                  for (
-                    var rowIndex = 0;
-                    rowIndex < _activeRows.length;
-                    rowIndex++
-                  )
-                    _buildCharacterRow(
-                      _activeRows[rowIndex],
-                      autofocusIndex: rowIndex == 1 ? 0 : -1,
-                    ),
-                  const SizedBox(height: 4),
-                  _buildActionRow(),
-                ],
+              // Key rows use fixed pixel widths sized for TV/tablet dialogs;
+              // scale the whole block down to fit narrower phone screens
+              // instead of overflowing. No-op once it already fits.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  children: [
+                    for (
+                      var rowIndex = 0;
+                      rowIndex < _activeRows.length;
+                      rowIndex++
+                    )
+                      _buildCharacterRow(
+                        _activeRows[rowIndex],
+                        autofocusIndex: rowIndex == 1 ? 0 : -1,
+                      ),
+                    const SizedBox(height: 4),
+                    _buildActionRow(),
+                  ],
+                ),
               ),
             ),
           ],

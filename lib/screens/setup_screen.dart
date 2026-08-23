@@ -33,9 +33,15 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _isConnecting = false;
   String? _errorMessage;
 
-  /// على iOS/iPad نستعمل system keyboard الطبيعي (touch UX).
-  /// TvKeyboard المخصّص يبقى لـAndroid TV + Desktop (D-pad UX).
-  bool get _useSystemKeyboard => !kIsWeb && Platform.isIOS;
+  /// على iOS، وعلى هواتف أندرويد (شاشة ضيقة أساسها اللمس)، نستعمل كيبورد
+  /// النظام الطبيعي. TvKeyboard المخصّص يبقى للشاشات الواسعة (TV/تابلت حيث
+  /// التحكم بالـD-pad)، لأنه مبني بمقاسات ثابتة تفيض على شاشة هاتف ضيقة.
+  bool _useSystemKeyboard(BuildContext context) {
+    if (kIsWeb) return false;
+    if (Platform.isIOS) return true;
+    return Platform.isAndroid &&
+        MediaQuery.sizeOf(context).shortestSide < 600;
+  }
 
   @override
   void initState() {
@@ -55,30 +61,30 @@ class _SetupScreenState extends State<SetupScreen> {
       if (mounted) setState(() {});
     });
 
-    // D-pad center / Enter on each field opens the TV keyboard dialog.
-    // على iOS/iPad نتخطى هذا كلياً — system keyboard الطبيعي يظهر
-    // مباشرة لما يضغط المستخدم على الحقل.
-    if (!_useSystemKeyboard) {
-      _bindTvKeyboard(
-        _serverFocus,
-        _serverController,
-        'عنوان السيرفر',
-        next: _usernameFocus,
-      );
-      _bindTvKeyboard(
-        _usernameFocus,
-        _usernameController,
-        'اسم المستخدم',
-        next: _passwordFocus,
-      );
-      _bindTvKeyboard(
-        _passwordFocus,
-        _passwordController,
-        'كلمة المرور',
-        next: _connectFocus,
-        obscure: true,
-      );
-    }
+    // D-pad center / Enter on each field opens the TV keyboard dialog on
+    // TV/tablet screens. The binding itself is harmless to attach
+    // everywhere -- on iOS/phones the callback no-ops (system keyboard
+    // shows via the field's own tap/focus instead), decided at call time
+    // since MediaQuery isn't safely readable this early in initState.
+    _bindTvKeyboard(
+      _serverFocus,
+      _serverController,
+      'عنوان السيرفر',
+      next: _usernameFocus,
+    );
+    _bindTvKeyboard(
+      _usernameFocus,
+      _usernameController,
+      'اسم المستخدم',
+      next: _passwordFocus,
+    );
+    _bindTvKeyboard(
+      _passwordFocus,
+      _passwordController,
+      'كلمة المرور',
+      next: _connectFocus,
+      obscure: true,
+    );
   }
 
   void _bindTvKeyboard(
@@ -89,6 +95,7 @@ class _SetupScreenState extends State<SetupScreen> {
     bool obscure = false,
   }) {
     node.onKeyEvent = (_, event) {
+      if (_useSystemKeyboard(context)) return KeyEventResult.ignored;
       if (event is KeyDownEvent &&
           (event.logicalKey == LogicalKeyboardKey.select ||
               event.logicalKey == LogicalKeyboardKey.enter ||
@@ -416,21 +423,22 @@ class _SetupScreenState extends State<SetupScreen> {
     VoidCallback? onTap,
     String? Function(String?)? validator,
   }) {
+    final useSystemKeyboard = _useSystemKeyboard(context);
     return TextFormField(
       controller: controller,
       focusNode: focusNode,
-      // iOS/iPad → system keyboard مباشر (readOnly=false).
-      // Android TV/Desktop → readOnly + onTap يفتح TvKeyboard المخصّص.
-      readOnly: !_useSystemKeyboard,
-      showCursor: _useSystemKeyboard,
-      enableInteractiveSelection: _useSystemKeyboard,
+      // iOS/هاتف أندرويد → system keyboard مباشر (readOnly=false).
+      // TV/تابلت → readOnly + onTap يفتح TvKeyboard المخصّص.
+      readOnly: !useSystemKeyboard,
+      showCursor: useSystemKeyboard,
+      enableInteractiveSelection: useSystemKeyboard,
       obscureText: obscureText,
       autofocus: autofocus,
-      onTap: _useSystemKeyboard ? null : onTap,
-      keyboardType: _useSystemKeyboard
+      onTap: useSystemKeyboard ? null : onTap,
+      keyboardType: useSystemKeyboard
           ? (obscureText ? TextInputType.visiblePassword : TextInputType.url)
           : null,
-      textInputAction: _useSystemKeyboard ? TextInputAction.next : null,
+      textInputAction: useSystemKeyboard ? TextInputAction.next : null,
       style: AppFonts.cairo(color: Colors.white, fontSize: 15),
       textDirection: TextDirection.ltr,
       validator: validator,

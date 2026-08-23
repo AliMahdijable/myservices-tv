@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
@@ -29,6 +32,16 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _keyboardOpen = false;
   bool _openingPlayer = false;
 
+  /// على iOS، وعلى هواتف أندرويد (شاشة ضيقة أساسها اللمس)، نستعمل كيبورد
+  /// النظام الطبيعي بدل TvKeyboard المخصّص المبني بمقاسات ثابتة تفيض على
+  /// شاشة هاتف ضيقة.
+  bool _useSystemKeyboard(BuildContext context) {
+    if (kIsWeb) return false;
+    if (Platform.isIOS) return true;
+    return Platform.isAndroid &&
+        MediaQuery.sizeOf(context).shortestSide < 600;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -38,7 +51,8 @@ class _SearchScreenState extends State<SearchScreen> {
     _controller.addListener(_onChanged);
     _fieldFocus.onKeyEvent = (_, event) {
       if (event is KeyDownEvent) {
-        if (_isActivationKey(event.logicalKey)) {
+        if (_isActivationKey(event.logicalKey) &&
+            !_useSystemKeyboard(context)) {
           _openSearch();
           return KeyEventResult.handled;
         }
@@ -168,12 +182,17 @@ class _SearchScreenState extends State<SearchScreen> {
                   child: TextField(
                     controller: _controller,
                     focusNode: _fieldFocus,
-                    readOnly: true,
-                    showCursor: false,
-                    enableInteractiveSelection: false,
+                    // TV/تابلت → readOnly + onTap يفتح TvKeyboard المخصّص.
+                    // هاتف/iOS → كيبورد النظام الطبيعي (readOnly=false).
+                    readOnly: !_useSystemKeyboard(context),
+                    showCursor: _useSystemKeyboard(context),
+                    enableInteractiveSelection: _useSystemKeyboard(context),
+                    keyboardType: _useSystemKeyboard(context)
+                        ? TextInputType.text
+                        : null,
                     textDirection: TextDirection.rtl,
                     style: AppFonts.cairo(color: Colors.white, fontSize: 16),
-                    onTap: _openSearch,
+                    onTap: _useSystemKeyboard(context) ? null : _openSearch,
                     decoration: InputDecoration(
                       hintText: 'ابحث عن قناة...',
                       hintStyle: AppFonts.cairo(
