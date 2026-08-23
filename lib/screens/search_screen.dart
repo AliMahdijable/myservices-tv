@@ -27,6 +27,7 @@ class _SearchScreenState extends State<SearchScreen> {
   int _totalResults = 0;
   bool _fieldFocused = false;
   bool _keyboardOpen = false;
+  bool _openingPlayer = false;
 
   @override
   void initState() {
@@ -89,15 +90,21 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _play(Channel channel) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) =>
-            PlayerScreen(channel: channel, categories: widget.categories),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
+    // Guards against a double tap/double OK-press pushing two PlayerScreen
+    // routes (and two live native players) before the first push lands.
+    if (_openingPlayer) return;
+    _openingPlayer = true;
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) =>
+                PlayerScreen(channel: channel, categories: widget.categories),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) => _openingPlayer = false);
   }
 
   @override

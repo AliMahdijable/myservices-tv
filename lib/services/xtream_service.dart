@@ -10,6 +10,10 @@ class XtreamService {
   static const String _cacheKey = 'xtream_categories_v3';
   static const String _cacheTimeKey = 'xtream_cache_time_v3';
 
+  static const Map<String, String> _headers = {
+    'User-Agent': AppConfig.userAgent,
+  };
+
   /// Returns true when the server responds with valid user_info.
   /// Tries standard path first, then /api/ prefix fallback.
   static Future<bool> testConnection(
@@ -26,7 +30,7 @@ class XtreamService {
           fallback: fallback,
         );
         final res = await http
-            .get(Uri.parse(url))
+            .get(Uri.parse(url), headers: _headers)
             .timeout(const Duration(seconds: 10));
         if (res.statusCode == 200) {
           final data = _tryDecode(res.bodyBytes);
@@ -45,7 +49,7 @@ class XtreamService {
     ]) {
       try {
         final res = await http
-            .get(Uri.parse(base))
+            .get(Uri.parse(base), headers: _headers)
             .timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           final data = _tryDecode(res.bodyBytes);
@@ -72,10 +76,10 @@ class XtreamService {
     // ── Parallel HTTP requests ────────────────────────────────────────────
     final responses = await Future.wait([
       http
-          .get(Uri.parse('$apiBase&action=get_live_categories'))
+          .get(Uri.parse('$apiBase&action=get_live_categories'), headers: _headers)
           .timeout(const Duration(seconds: 20)),
       http
-          .get(Uri.parse('$apiBase&action=get_live_streams'))
+          .get(Uri.parse('$apiBase&action=get_live_streams'), headers: _headers)
           .timeout(const Duration(seconds: 30)),
     ]);
 
@@ -109,7 +113,8 @@ class XtreamService {
     // ── Group streams ─────────────────────────────────────────────────────
     final Map<String, List<Channel>> grouped = {};
     for (final s in rawStreams) {
-      final streamId = (s['stream_id'] as num?)?.toInt() ?? 0;
+      // Many Xtream/PHP panels serialize numeric fields as JSON strings.
+      final streamId = int.tryParse(s['stream_id']?.toString() ?? '') ?? 0;
       if (streamId == 0) continue;
 
       final catName = catMap[s['category_id']?.toString() ?? ''] ?? 'أخرى';

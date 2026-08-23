@@ -7,6 +7,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../config/app_config.dart';
 import '../models/channel.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_helpers.dart';
@@ -28,7 +29,7 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _videoController;
   late Channel _currentChannel;
@@ -45,8 +46,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   static const int _maxRetries = 5;
   static const String _lastChannelKey = 'last_channel_index';
 
-  // 0 = letterbox (panscan=0), 1 = zoom/fill (panscan=1)
+  // 0 = letterbox (BoxFit.contain), 1 = zoom/fill (BoxFit.cover) — applied
+  // declaratively via _buildVideoLayer()'s `fit:` on every build.
   int _aspectMode = 0;
+  static const String _aspectModeKey = 'player_aspect_mode';
   static const List<IconData> _aspectIcons = [
     Icons.fit_screen_rounded,
     Icons.crop_free_rounded,
@@ -55,10 +58,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Timer? _hideTimer;
   Timer? _channelSwitchDebounce;
-  Timer? _bufferTimeoutTimer;
   Timer? _reconnectTimer;
   Timer? _stablePlaybackTimer;
   Timer? _completedTimer;
+
+  // Ticks every second for the life of an attempt. Tracks two independent
+  // stall classes mpv's own buffering/error/completed events can miss:
+  // repeated short rebuffers (cumulative _bufferedSeconds never resets just
+  // because a stall briefly clears) and a decoder-level freeze (playing and
+  // not buffering, but position stops advancing).
+  Timer? _bufferWatchdogTicker;
+  int _bufferedSeconds = 0;
+  Duration _lastKnownPosition = Duration.zero;
+  int _stalledPositionSeconds = 0;
+  bool _mpvConfigApplied = true;
+  bool _wasPlayingBeforeBackground = true;
 
   // Every channel change creates a new session. Delayed callbacks from an old
   // stream are ignored instead of reconnecting the newly selected channel.
@@ -95,6 +109,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentChannel = widget.channel;
 
     _playbackCategories = widget.categories
@@ -137,8 +152,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(_initializePlayback());
     _startHideTimer();
     _loadFavorites();
+    _loadAspectMode();
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _focusOsdDefault());
+  }
+
+  Future<void> _loadAspectMode() async {
+    final preferences = await SharedPreferences.getInstance();
+    final saved = preferences.getInt(_aspectModeKey);
+    if (mounted && saved != null && saved != _aspectMode) {
+      setState(() => _aspectMode = saved % _aspectLabels.length);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        _wasPlayingBeforeBackground = _player.state.playing;
+        _player.pause();
+        break;
+      case AppLifecycleState.resumed:
+        if (_wasPlayingBeforeBackground && !_hasError) {
+          _player.play();
+        }
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   Future<void> _initializePlayback() async {
@@ -173,6 +216,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
     } catch (error) {
+      // mpv's own network-timeout/cache tuning didn't apply — fall back to a
+      // shorter Dart-side watchdog budget instead of trusting mpv defaults.
+      _mpvConfigApplied = false;
       debugPrint('[Player] mpv configuration failed: ${_redactLog(error)}');
     }
   }
@@ -184,9 +230,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _isBuffering = buffering);
       if (buffering) {
         _stablePlaybackTimer?.cancel();
-        _startBufferTimeoutTimer(sessionId, _currentAttemptId);
       } else {
-        _bufferTimeoutTimer?.cancel();
         _scheduleStablePlaybackReset(sessionId, _currentAttemptId);
       }
     });
@@ -209,6 +253,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final sessionId = _playbackSessionId;
       final attemptId = _currentAttemptId;
       _completedTimer?.cancel();
+      if (!_isBuffering && !_hasError) {
+        setState(() => _isBuffering = true);
+      }
       _completedTimer = Timer(const Duration(seconds: 3), () {
         if (mounted &&
             sessionId == _playbackSessionId &&
@@ -246,6 +293,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         // A single buffering=false event is not enough to prove recovery.
         // Reset only after continuous playback with real position progress.
         _retryCount = 0;
+        _bufferedSeconds = 0;
         _handledFailureAttemptId = null;
         // If only the provider's alternate endpoint became stable, keep using
         // it for later reconnects in this channel session.
@@ -280,15 +328,57 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  void _startBufferTimeoutTimer(int sessionId, int attemptId) {
+  // Ticks once per second for the lifetime of an attempt and closes two
+  // recovery gaps mpv's own buffering/error/completed events can miss:
+  //  1) mpv's buffering flag can flap true/false rapidly on a degraded link
+  //     (short stalls, brief recoveries). A one-shot timer reset on every
+  //     onset would never accumulate enough continuous time to fire, so the
+  //     budget below only resets on a *proven* stable-playback signal (see
+  //     _scheduleStablePlaybackReset), not on every buffering=false blip.
+  //  2) mpv can report playing=true/buffering=false while the decoder is
+  //     silently frozen with no error/completed event. Position progress is
+  //     tracked independently and a stall is treated as a failure too.
+  void _startBufferWatchdog(int sessionId, int attemptId) {
     if (attemptId == 0) return;
-    _bufferTimeoutTimer?.cancel();
-    _bufferTimeoutTimer = Timer(const Duration(seconds: 35), () {
-      if (mounted &&
-          sessionId == _playbackSessionId &&
-          attemptId == _currentAttemptId &&
-          _isBuffering) {
-        _handleStreamError(sessionId, attemptId);
+    _bufferWatchdogTicker?.cancel();
+    _bufferedSeconds = 0;
+    _stalledPositionSeconds = 0;
+    _lastKnownPosition = _player.state.position;
+    // mpv's own network-timeout may not have applied; use a shorter budget.
+    final budgetSeconds = _mpvConfigApplied ? 35 : 20;
+    _bufferWatchdogTicker = Timer.periodic(const Duration(seconds: 1), (
+      timer,
+    ) {
+      if (!mounted ||
+          sessionId != _playbackSessionId ||
+          attemptId != _currentAttemptId) {
+        timer.cancel();
+        return;
+      }
+
+      if (_isBuffering) {
+        _bufferedSeconds++;
+        if (_bufferedSeconds >= budgetSeconds) {
+          timer.cancel();
+          _handleStreamError(sessionId, attemptId);
+        }
+        return;
+      }
+
+      if (_player.state.playing && !_player.state.completed) {
+        final position = _player.state.position;
+        if (position > _lastKnownPosition) {
+          _lastKnownPosition = position;
+          _stalledPositionSeconds = 0;
+        } else {
+          _stalledPositionSeconds++;
+          if (_stalledPositionSeconds >= 10) {
+            timer.cancel();
+            _handleStreamError(sessionId, attemptId);
+          }
+        }
+      } else {
+        _stalledPositionSeconds = 0;
       }
     });
   }
@@ -307,7 +397,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_handledFailureAttemptId == attemptId) return;
     _handledFailureAttemptId = attemptId;
 
-    _bufferTimeoutTimer?.cancel();
+    _bufferWatchdogTicker?.cancel();
     _stablePlaybackTimer?.cancel();
     _completedTimer?.cancel();
 
@@ -345,7 +435,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _playChannel(Channel channel) async {
     _channelSwitchDebounce?.cancel();
-    _bufferTimeoutTimer?.cancel();
+    _bufferWatchdogTicker?.cancel();
     _reconnectTimer?.cancel();
     _stablePlaybackTimer?.cancel();
     _completedTimer?.cancel();
@@ -378,7 +468,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted || sessionId != _playbackSessionId) return;
     final attemptId = ++_currentAttemptId;
     _handledFailureAttemptId = null;
-    _startBufferTimeoutTimer(sessionId, attemptId);
+    _startBufferWatchdog(sessionId, attemptId);
 
     // After 2 consecutive failures, try alternate format (.m3u8 ↔ .ts).
     // Once that endpoint proves stable, retain it for this channel session.
@@ -387,13 +477,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ? alternateLiveStreamUrl(channel.url)
         : channel.url;
     final headers = <String, String>{
-      'User-Agent': 'Mozilla/5.0 IPTV Player',
+      'User-Agent': AppConfig.userAgent,
       ...channel.httpHeaders,
     };
     try {
       await _player.open(Media(url, httpHeaders: headers));
-      if (!mounted || sessionId != _playbackSessionId) return;
-      _applyAspectMode();
     } catch (error) {
       debugPrint('[Player] open failed: ${_redactLog(error)}');
       if (mounted) _handleStreamError(sessionId, attemptId);
@@ -417,7 +505,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // Invalidate callbacks from the old stream immediately while D-pad input
     // is being debounced.
     _playbackSessionId++;
-    _bufferTimeoutTimer?.cancel();
+    _bufferWatchdogTicker?.cancel();
     _reconnectTimer?.cancel();
     _stablePlaybackTimer?.cancel();
     _completedTimer?.cancel();
@@ -455,9 +543,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _switchToChannel(int globalIndex) {
     if (globalIndex < 0 || globalIndex >= _allChannels.length) return;
-    _currentIndex = globalIndex;
+    // Reselecting the channel that's already playing needs no reconnect —
+    // just close the guide.
+    if (globalIndex != _currentIndex) {
+      _currentIndex = globalIndex;
+      // Route through the same debounce as channel-up/down so a fast
+      // double-pick on the list doesn't fully open a discarded channel
+      // before opening the intended one.
+      _playChannelDebounced(_allChannels[globalIndex]);
+    }
     _focusedChannelIndex = globalIndex;
-    unawaited(_playChannel(_allChannels[globalIndex]));
     setState(() {
       _showChannelList = false;
       _osdInteractive = false;
@@ -571,12 +666,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Invalidate all delayed work before disposing the native player.
     _playbackSessionId++;
     _currentAttemptId++;
     _hideTimer?.cancel();
     _channelSwitchDebounce?.cancel();
-    _bufferTimeoutTimer?.cancel();
+    _bufferWatchdogTicker?.cancel();
     _reconnectTimer?.cancel();
     _stablePlaybackTimer?.cancel();
     _completedTimer?.cancel();
@@ -632,15 +728,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     if (key == LogicalKeyboardKey.mediaStop) {
-      Navigator.of(context).pop();
-      return KeyEventResult.handled;
-    }
-
-    if (key == LogicalKeyboardKey.info ||
-        key == LogicalKeyboardKey.contextMenu ||
-        key == LogicalKeyboardKey.f4 ||
-        key == LogicalKeyboardKey.keyE) {
-      _cycleAspect();
+      // Mirror escape/goBack's staged close instead of exiting straight to
+      // Home while the guide/OSD is still open.
+      if (_showChannelList) {
+        _closeChannelList();
+      } else if (_showControls && _osdInteractive) {
+        _hideControls();
+      } else {
+        Navigator.of(context).pop();
+      }
       return KeyEventResult.handled;
     }
 
@@ -672,6 +768,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.ignored;
     }
 
+    if (key == LogicalKeyboardKey.info ||
+        key == LogicalKeyboardKey.contextMenu ||
+        key == LogicalKeyboardKey.f4 ||
+        key == LogicalKeyboardKey.keyE) {
+      _cycleAspect();
+      return KeyEventResult.handled;
+    }
+
     if (_showChannelList) {
       if (key == LogicalKeyboardKey.arrowUp) {
         _moveChannelListFocus(-1);
@@ -688,6 +792,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowRight ||
           key == LogicalKeyboardKey.escape ||
           key == LogicalKeyboardKey.goBack) {
         _closeChannelList();
@@ -1140,8 +1245,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  void _applyAspectMode() {}
-
   Widget _buildChannelInfoBanner() {
     return Container(
       constraints: BoxConstraints(
@@ -1423,8 +1526,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _cycleAspect() {
     setState(() => _aspectMode = (_aspectMode + 1) % _aspectLabels.length);
-    _applyAspectMode();
+    unawaited(_persistAspectMode());
     _refreshControlsAfterAction();
+  }
+
+  Future<void> _persistAspectMode() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(_aspectModeKey, _aspectMode);
   }
 
   Widget _buildBottomBar() {

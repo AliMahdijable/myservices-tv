@@ -156,4 +156,8 @@ class AppConfig {
   // ── Misc ───────────────────────────────────────────────────────────────
   static const Duration cacheDuration = Duration(hours: 6);
   static const String appVersion = '1.1.5';
+
+  // Sent on every HTTP request (playlist/category discovery and playback
+  // alike) — some IPTV providers reject requests with no User-Agent at all.
+  static const String userAgent = 'Mozilla/5.0 IPTV Player';
 }

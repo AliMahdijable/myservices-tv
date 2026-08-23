@@ -34,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Channel> _recentlyWatched = [];
   int _dynamicDataRequestId = 0;
   final ScrollController _homeScrollController = ScrollController();
+  bool _openingPlayer = false;
 
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
@@ -122,6 +123,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openPlayer(Channel channel, List<Channel> categoryChannels) {
+    // Guards against a double tap/double OK-press pushing two PlayerScreen
+    // routes (and two live native players) before the first push lands.
+    if (_openingPlayer) return;
+    _openingPlayer = true;
     Navigator.of(context)
         .push(
           PageRouteBuilder(
@@ -133,6 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         )
         .then((_) {
+          _openingPlayer = false;
           if (mounted) unawaited(_loadDynamicData());
         });
   }

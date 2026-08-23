@@ -46,7 +46,7 @@ class M3uService {
     for (final url in urls) {
       try {
         final response = await http
-            .get(Uri.parse(url))
+            .get(Uri.parse(url), headers: {'User-Agent': AppConfig.userAgent})
             .timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
