@@ -24,7 +24,7 @@ void main() {
       'favorite_channel_urls': <String>[url],
       'recently_watched_channels': <String>[jsonEncode(channel.toJson())],
     });
-    expect(await FavoritesService.getFavoriteUrls(), {url});
+    expect(await FavoritesService.getFavoriteKeys(), {url});
     expect(await RecentlyWatchedService.getChannels(), hasLength(1));
 
     await tester.pumpWidget(

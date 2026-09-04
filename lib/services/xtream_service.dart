@@ -3,12 +3,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/channel.dart';
+import '../player/playback_preferences.dart';
 
 class XtreamService {
-  // v3 stores HLS-first live URLs. The version bump prevents an existing
-  // MPEG-TS cache from silently bypassing the new playback profile.
-  static const String _cacheKey = 'xtream_categories_v3';
-  static const String _cacheTimeKey = 'xtream_cache_time_v3';
+  // v4 builds live URLs with the container format resolved per server rather
+  // than hardcoding HLS. The bump discards v3's m3u8-only cache, which made
+  // every channel fail its first open on panels that refuse HLS under load.
+  static const String _cacheKey = 'xtream_categories_v4';
+  static const String _cacheTimeKey = 'xtream_cache_time_v4';
 
   static const Map<String, String> _headers = {
     'User-Agent': AppConfig.userAgent,
@@ -42,6 +44,9 @@ class XtreamService {
   }
 
   /// Returns the working Xtream API base URL (tries standard then /api/ prefix).
+  ///
+  /// Also records the formats the panel says it will serve, so live URLs are
+  /// built with one the server accepts instead of a hardcoded guess.
   static Future<String?> _resolveApiBase() async {
     for (final base in [
       AppConfig.xtreamApiBase,
@@ -53,11 +58,24 @@ class XtreamService {
             .timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           final data = _tryDecode(res.bodyBytes);
-          if (data is Map && data['user_info'] != null) return base;
+          if (data is Map && data['user_info'] != null) {
+            await _recordAllowedFormats(data['user_info']);
+            return base;
+          }
         }
       } catch (_) {}
     }
     return null;
+  }
+
+  static Future<void> _recordAllowedFormats(dynamic userInfo) async {
+    if (userInfo is! Map) return;
+    final raw = userInfo['allowed_output_formats'];
+    if (raw is! List) return;
+    await PlaybackPreferences.applyAllowedFormats(
+      AppConfig.baseUrl,
+      raw.map((format) => format.toString().toLowerCase()).toList(),
+    );
   }
 
   /// Fetches live categories + streams in **parallel**, then merges them.
@@ -110,6 +128,10 @@ class XtreamService {
       if (!catOrder.contains(name)) catOrder.add(name);
     }
 
+    // Resolved once for the whole playlist: whichever container this server
+    // has actually served before, defaulting to MPEG-TS.
+    final format = await PlaybackPreferences.formatForServer(AppConfig.baseUrl);
+
     // ── Group streams ─────────────────────────────────────────────────────
     final Map<String, List<Channel>> grouped = {};
     for (final s in rawStreams) {
@@ -123,10 +145,10 @@ class XtreamService {
           .add(
             Channel(
               name: s['name']?.toString() ?? '',
-              // HLS is more resilient to short network interruptions than a single
-              // long-running MPEG-TS connection. PlayerScreen falls back to `.ts`
-              // after repeated open failures for servers that do not expose HLS.
-              url: AppConfig.liveStreamUrl(streamId, ext: 'm3u8'),
+              // Built with the format this server is known to serve. The
+              // player still falls back to the other container if a specific
+              // channel fails in a way that a format switch could fix.
+              url: AppConfig.liveStreamUrl(streamId, ext: format),
               logoUrl: s['stream_icon']?.toString() ?? '',
               group: catName,
               tvgId: s['epg_channel_id']?.toString() ?? '',
@@ -239,5 +261,7 @@ class XtreamService {
     await prefs.remove(_cacheTimeKey);
     await prefs.remove('xtream_categories_v2');
     await prefs.remove('xtream_cache_time_v2');
+    await prefs.remove('xtream_categories_v3');
+    await prefs.remove('xtream_cache_time_v3');
   }
 }

@@ -1,17 +1,17 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import '../config/app_config.dart';
 import '../models/channel.dart';
+import '../player/live_playback_controller.dart';
+import '../player/playback_preferences.dart';
+import '../player/stream_failure.dart';
+import '../widgets/player_settings_panel.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_helpers.dart';
-import '../utils/stream_url_helpers.dart';
 import '../services/favorites_service.dart';
 import '../services/recently_watched_service.dart';
 
@@ -29,22 +29,30 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver {
-  late final Player _player;
-  late final VideoController _videoController;
+class _PlayerScreenState extends State<PlayerScreen>
+    with WidgetsBindingObserver {
+  final LivePlaybackController _playback = LivePlaybackController();
   late Channel _currentChannel;
   late List<ChannelCategory> _playbackCategories;
   late List<Channel> _allChannels;
   int _currentIndex = 0;
 
+  /// Set by the first real key press. Distinguishes a device someone is
+  /// driving with a remote from one they are touching.
+  bool _sawKeyEvent = false;
+
   bool _showControls = true;
   bool _showChannelList = false;
+  bool _showSettings = false;
+  int _focusedSettingRow = 0;
   bool _osdInteractive = true;
-  bool _isBuffering = true;
-  bool _hasError = false;
-  int _retryCount = 0;
-  static const int _maxRetries = 5;
-  static const String _lastChannelKey = 'last_channel_index';
+
+  /// Mirrors [LivePlaybackController.state] so build methods read plain
+  /// fields. The controller owns every rule behind these values.
+  PlaybackUiState _playbackState = const PlaybackUiState();
+
+  bool get _isBuffering => _playbackState.isBuffering;
+  bool get _hasError => _playbackState.hasFatalError;
 
   // 0 = letterbox (BoxFit.contain), 1 = zoom/fill (BoxFit.cover) — applied
   // declaratively via _buildVideoLayer()'s `fit:` on every build.
@@ -58,44 +66,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
 
   Timer? _hideTimer;
   Timer? _channelSwitchDebounce;
-  Timer? _reconnectTimer;
-  Timer? _stablePlaybackTimer;
-  Timer? _completedTimer;
+  Timer? _settingApplyDebounce;
 
-  // Ticks every second for the life of an attempt. Tracks two independent
-  // stall classes mpv's own buffering/error/completed events can miss:
-  // repeated short rebuffers (cumulative _bufferedSeconds never resets just
-  // because a stall briefly clears) and a decoder-level freeze (playing and
-  // not buffering, but position stops advancing).
-  Timer? _bufferWatchdogTicker;
-  int _bufferedSeconds = 0;
-  Duration _lastKnownPosition = Duration.zero;
-  int _stalledPositionSeconds = 0;
-  bool _mpvConfigApplied = true;
-  bool _wasPlayingBeforeBackground = true;
-
-  // A freshly opened stream can misbehave during startup in ways that
-  // self-correct almost immediately: mpv/HLS can report a spurious
-  // "completed" while the manifest is still warming up, and a hardware
-  // decoder can glitch (e.g. a brief green/garbage frame) and report an
-  // error on the first frame or two. Give each attempt a warm-up window
-  // where this is expected and recoverable rather than a real failure.
-  DateTime? _attemptStartedAt;
-  static const Duration _attemptWarmupPeriod = Duration(seconds: 5);
-  // One free, silent retry per channel open for anything that fails during
-  // the warm-up window — shown to the user as continued loading, not a
-  // "reconnecting" state. A second failure (warmup or not) is real.
-  int _silentRetriesRemaining = 0;
-
-  // Every channel change creates a new session. Delayed callbacks from an old
-  // stream are ignored instead of reconnecting the newly selected channel.
-  int _playbackSessionId = 0;
-  int _currentAttemptId = 0;
-  int? _handledFailureAttemptId;
-  bool _preferAlternateUrl = false;
-  bool _currentAttemptUsesAlternateUrl = false;
-
-  Set<String> _favoriteUrls = {};
+  Set<String> _favoriteKeys = {};
   bool _showChannelInfo = false;
   Timer? _channelInfoTimer;
 
@@ -113,11 +86,6 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   late Map<int, int> _channelToItemIndex;
   // Pre-computed cumulative scroll offsets per item.
   late List<double> _sidebarOffsets;
-
-  StreamSubscription? _bufferingSub;
-  StreamSubscription? _errorSub;
-  StreamSubscription? _completedSub;
-  StreamSubscription? _playingSub;
 
   @override
   void initState() {
@@ -147,12 +115,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     _focusedChannelIndex = _currentIndex;
     _buildSidebarData();
 
-    _player = Player(
-      configuration: const PlayerConfiguration(bufferSize: 32 * 1024 * 1024),
-    );
-    _videoController = VideoController(_player);
-
-    _setupPlayerListeners();
+    _playback.state.addListener(_onPlaybackStateChanged);
 
     WakelockPlus.enable();
 
@@ -178,18 +141,36 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     }
   }
 
+  void _onPlaybackStateChanged() {
+    if (!mounted) return;
+    final next = _playback.state.value;
+    final becameFatal = next.hasFatalError && !_playbackState.hasFatalError;
+    setState(() => _playbackState = next);
+
+    if (becameFatal) {
+      // The terminal error owns the screen: hide the OSD and the guide so the
+      // retry button is what the remote lands on.
+      _hideTimer?.cancel();
+      setState(() {
+        _showControls = false;
+        _showChannelList = false;
+        // Left set, this kept PopScope.canPop false and cost two extra silent
+        // Back presses to leave an error screen whose OSD is already invisible.
+        _showSettings = false;
+      });
+      _focusErrorRetry();
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        _wasPlayingBeforeBackground = _player.state.playing;
-        _player.pause();
+        _playback.onAppBackgrounded();
         break;
       case AppLifecycleState.resumed:
-        if (_wasPlayingBeforeBackground && !_hasError) {
-          _player.play();
-        }
+        _playback.onAppResumed();
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
@@ -198,141 +179,15 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   }
 
   Future<void> _initializePlayback() async {
-    // All native properties must be applied before opening the first stream.
-    await _configureMpv();
+    // Native properties must be applied before the first stream opens.
+    await _playback.initialize();
     if (!mounted) return;
     await _playChannel(_currentChannel);
   }
 
-  Future<void> _configureMpv() async {
-    try {
-      final platform = _player.platform;
-      if (platform is NativePlayer) {
-        // VideoController already selects Android's safe hardware decoder
-        // profile. Do not override hwdec, video-sync, framedrop or libavformat
-        // options here: media_kit supplies device-safe defaults and essential
-        // HLS options such as segment retries.
-        const properties = <String, String>{
-          'network-timeout': '20',
-          'cache': 'yes',
-          'cache-on-disk': 'no',
-          'cache-pause': 'yes',
-          'cache-pause-initial': 'yes',
-          'cache-pause-wait': '2',
-          'cache-secs': '15',
-          // PlayerConfiguration provides a 32 MiB forward cache. Live TV does
-          // not need a large backwards cache, so keep its memory cost small.
-          'demuxer-max-back-bytes': '2MiB',
-        };
-        for (final property in properties.entries) {
-          await platform.setProperty(property.key, property.value);
-        }
-      }
-    } catch (error) {
-      // mpv's own network-timeout/cache tuning didn't apply — fall back to a
-      // shorter Dart-side watchdog budget instead of trusting mpv defaults.
-      _mpvConfigApplied = false;
-      debugPrint('[Player] mpv configuration failed: ${_redactLog(error)}');
-    }
-  }
-
-  void _setupPlayerListeners() {
-    _bufferingSub = _player.stream.buffering.listen((buffering) {
-      if (!mounted) return;
-      final sessionId = _playbackSessionId;
-      setState(() => _isBuffering = buffering);
-      if (buffering) {
-        _stablePlaybackTimer?.cancel();
-      } else {
-        _scheduleStablePlaybackReset(sessionId, _currentAttemptId);
-      }
-    });
-
-    _errorSub = _player.stream.error.listen((message) {
-      debugPrint('[Player] stream error: ${_redactLog(message)}');
-      // media_kit forwards any mpv log message at its internal 'error'
-      // severity (file/ffmpeg/vd/ad/cplayer/stream prefixes) onto this
-      // stream verbatim -- 'error' sits below mpv's own 'fatal' level and
-      // does not itself mean playback stopped. mpv runs an automatic
-      // seekability/duration probe on every open (unrelated to any user
-      // action -- this screen has no seek UI at all); it fails harmlessly
-      // on live feeds and logs exactly this, while playback keeps running.
-      // Confirmed against media_kit's own source (real.dart, MPV_EVENT_LOG_
-      // MESSAGE handling) -- do not treat it as a fatal stream failure.
-      if (message.contains('Cannot seek in this stream')) return;
-      if (mounted) {
-        _handleStreamError(_playbackSessionId, _currentAttemptId);
-      }
-    });
-
-    // A live endpoint may temporarily report completion during a disconnect.
-    // Debounce it and bind the callback to the active playback session.
-    _completedSub = _player.stream.completed.listen((completed) {
-      if (!mounted) return;
-      if (!completed) {
-        _completedTimer?.cancel();
-        return;
-      }
-      final startedAt = _attemptStartedAt;
-      if (startedAt != null &&
-          DateTime.now().difference(startedAt) < _attemptWarmupPeriod) {
-        return;
-      }
-      final sessionId = _playbackSessionId;
-      final attemptId = _currentAttemptId;
-      _completedTimer?.cancel();
-      if (!_isBuffering && !_hasError) {
-        setState(() => _isBuffering = true);
-      }
-      _completedTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted &&
-            sessionId == _playbackSessionId &&
-            attemptId == _currentAttemptId &&
-            _player.state.completed) {
-          _handleStreamError(sessionId, attemptId);
-        }
-      });
-    });
-
-    _playingSub = _player.stream.playing.listen((playing) {
-      if (!mounted) return;
-      if (playing && !_isBuffering) {
-        _scheduleStablePlaybackReset(_playbackSessionId, _currentAttemptId);
-      }
-    });
-  }
-
-  void _scheduleStablePlaybackReset(int sessionId, int attemptId) {
-    if (attemptId == 0) return;
-    _stablePlaybackTimer?.cancel();
-    final startPosition = _player.state.position;
-    _stablePlaybackTimer = Timer(const Duration(seconds: 12), () {
-      if (!mounted ||
-          sessionId != _playbackSessionId ||
-          attemptId != _currentAttemptId) {
-        return;
-      }
-      final progressed =
-          _player.state.position - startPosition >= const Duration(seconds: 8);
-      if (!_isBuffering &&
-          _player.state.playing &&
-          !_player.state.completed &&
-          progressed) {
-        // A single buffering=false event is not enough to prove recovery.
-        // Reset only after continuous playback with real position progress.
-        _retryCount = 0;
-        _bufferedSeconds = 0;
-        _handledFailureAttemptId = null;
-        // If only the provider's alternate endpoint became stable, keep using
-        // it for later reconnects in this channel session.
-        _preferAlternateUrl = _currentAttemptUsesAlternateUrl;
-      }
-    });
-  }
-
   Future<void> _loadFavorites() async {
-    final urls = await FavoritesService.getFavoriteUrls();
-    if (mounted) setState(() => _favoriteUrls = urls);
+    final keys = await FavoritesService.getFavoriteKeys();
+    if (mounted) setState(() => _favoriteKeys = keys);
   }
 
   void _showChannelInfoBriefly() {
@@ -343,231 +198,37 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     });
   }
 
+  bool get _isCurrentFavorite =>
+      FavoritesService.isFavorite(_currentChannel, _favoriteKeys);
+
   Future<void> _toggleFavorite() async {
-    final isNowFav = await FavoritesService.toggleFavorite(_currentChannel);
-    if (mounted) {
-      setState(() {
-        if (isNowFav) {
-          _favoriteUrls.add(_currentChannel.url);
-        } else {
-          _favoriteUrls.remove(_currentChannel.url);
-        }
-      });
-    }
-  }
-
-  // Ticks once per second for the lifetime of an attempt and closes two
-  // recovery gaps mpv's own buffering/error/completed events can miss:
-  //  1) mpv's buffering flag can flap true/false rapidly on a degraded link
-  //     (short stalls, brief recoveries). A one-shot timer reset on every
-  //     onset would never accumulate enough continuous time to fire, so the
-  //     budget below only resets on a *proven* stable-playback signal (see
-  //     _scheduleStablePlaybackReset), not on every buffering=false blip.
-  //  2) mpv can report playing=true/buffering=false while the decoder is
-  //     silently frozen with no error/completed event. Position progress is
-  //     tracked independently and a stall is treated as a failure too.
-  void _startBufferWatchdog(int sessionId, int attemptId) {
-    if (attemptId == 0) return;
-    _bufferWatchdogTicker?.cancel();
-    _bufferedSeconds = 0;
-    _stalledPositionSeconds = 0;
-    _lastKnownPosition = _player.state.position;
-    // mpv's own network-timeout may not have applied; use a shorter budget.
-    final budgetSeconds = _mpvConfigApplied ? 35 : 20;
-    _bufferWatchdogTicker = Timer.periodic(const Duration(seconds: 1), (
-      timer,
-    ) {
-      if (!mounted ||
-          sessionId != _playbackSessionId ||
-          attemptId != _currentAttemptId) {
-        timer.cancel();
-        return;
-      }
-
-      if (_isBuffering) {
-        _bufferedSeconds++;
-        if (_bufferedSeconds >= budgetSeconds) {
-          timer.cancel();
-          _handleStreamError(sessionId, attemptId);
-        }
-        return;
-      }
-
-      // Not buffering this tick: let the penalty decay instead of only
-      // clearing it on a full 12s-stability signal. A stream with a
-      // persistent-but-tolerable stutter (buffer a few seconds, play a
-      // few, repeat) never holds 12 clean seconds, so without decay this
-      // budget climbs across cycles and forces a needless reconnect on a
-      // stream that is actually still delivering video.
-      if (_bufferedSeconds > 0) _bufferedSeconds--;
-
-      if (_player.state.playing && !_player.state.completed) {
-        final position = _player.state.position;
-        if (position > _lastKnownPosition) {
-          _lastKnownPosition = position;
-          _stalledPositionSeconds = 0;
-        } else {
-          _stalledPositionSeconds++;
-          if (_stalledPositionSeconds >= 10) {
-            timer.cancel();
-            _handleStreamError(sessionId, attemptId);
-          }
-        }
-      } else {
-        _stalledPositionSeconds = 0;
-      }
-    });
-  }
-
-  void _handleStreamError(int sessionId, int attemptId) {
-    if (!mounted ||
-        sessionId != _playbackSessionId ||
-        attemptId == 0 ||
-        attemptId != _currentAttemptId) {
-      return;
-    }
-    if (_channelSwitchDebounce?.isActive ?? false) return;
-
-    // mpv can emit several log errors plus completed for one failed open.
-    // Count and recover from that attempt exactly once.
-    if (_handledFailureAttemptId == attemptId) return;
-    _handledFailureAttemptId = attemptId;
-
-    _bufferWatchdogTicker?.cancel();
-    _stablePlaybackTimer?.cancel();
-    _completedTimer?.cancel();
-
-    // Coalesce duplicate mpv error/completed events into one reconnect.
-    if (_reconnectTimer?.isActive ?? false) return;
-
-    if (_silentRetriesRemaining > 0 &&
-        _attemptStartedAt != null &&
-        DateTime.now().difference(_attemptStartedAt!) < _attemptWarmupPeriod) {
-      _silentRetriesRemaining--;
-      setState(() => _isBuffering = true);
-      _reconnectTimer = Timer(const Duration(milliseconds: 400), () {
-        _reconnectTimer = null;
-        if (mounted && sessionId == _playbackSessionId) {
-          unawaited(_doPlayChannel(_currentChannel, sessionId));
-        }
-      });
-      return;
-    }
-
-    if (_retryCount >= _maxRetries) {
-      setState(() {
-        _hasError = true;
-        _isBuffering = false;
-        _showControls = false;
-        _showChannelList = false;
-      });
-      _hideTimer?.cancel();
-      _focusErrorRetry();
-      return;
-    }
-
-    _retryCount++;
-    // Exponential backoff: 2s, 4s, 8s, 8s, 8s (capped).
-    final delay = Duration(seconds: min(1 << _retryCount, 8));
-
-    setState(() {
-      _isBuffering = true;
-      _hasError = false;
-    });
-
-    _reconnectTimer = Timer(delay, () {
-      _reconnectTimer = null;
-      if (mounted && sessionId == _playbackSessionId) {
-        unawaited(_doPlayChannel(_currentChannel, sessionId));
-      }
-    });
+    await FavoritesService.toggleFavorite(_currentChannel);
+    // Re-read rather than patching the set locally: toggling also clears any
+    // legacy URL duplicate, so the stored list is the only source of truth.
+    if (mounted) await _loadFavorites();
   }
 
   Future<void> _playChannel(Channel channel) async {
     _channelSwitchDebounce?.cancel();
-    _bufferWatchdogTicker?.cancel();
-    _reconnectTimer?.cancel();
-    _stablePlaybackTimer?.cancel();
-    _completedTimer?.cancel();
-    _retryCount = 0;
-    _silentRetriesRemaining = 1;
-    _handledFailureAttemptId = null;
-    _preferAlternateUrl = false;
-    _currentAttemptUsesAlternateUrl = false;
-    final sessionId = ++_playbackSessionId;
-
-    setState(() {
-      _currentChannel = channel;
-      _isBuffering = true;
-      _hasError = false;
-    });
+    setState(() => _currentChannel = channel);
 
     unawaited(RecentlyWatchedService.addChannel(channel));
 
-    // Persist last played channel for next session
-    unawaited(_persistLastChannelIndex());
-
-    await _doPlayChannel(channel, sessionId);
-  }
-
-  Future<void> _persistLastChannelIndex() async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(_lastChannelKey, _currentIndex);
-  }
-
-  Future<void> _doPlayChannel(Channel channel, int sessionId) async {
-    if (!mounted || sessionId != _playbackSessionId) return;
-    final attemptId = ++_currentAttemptId;
-    _handledFailureAttemptId = null;
-    _attemptStartedAt = DateTime.now();
-    _startBufferWatchdog(sessionId, attemptId);
-
-    // After 2 consecutive failures, try alternate format (.m3u8 ↔ .ts).
-    // Once that endpoint proves stable, retain it for this channel session.
-    _currentAttemptUsesAlternateUrl = _preferAlternateUrl || _retryCount >= 2;
-    final url = _currentAttemptUsesAlternateUrl
-        ? alternateLiveStreamUrl(channel.url)
-        : channel.url;
-    final headers = <String, String>{
-      'User-Agent': AppConfig.userAgent,
-      ...channel.httpHeaders,
-    };
-    try {
-      await _player.open(Media(url, httpHeaders: headers));
-    } catch (error) {
-      debugPrint('[Player] open failed: ${_redactLog(error)}');
-      if (mounted) _handleStreamError(sessionId, attemptId);
-    }
-  }
-
-  String _redactLog(Object value) {
-    return value.toString().replaceAll(
-      RegExp(r'https?://[^\s]+'),
-      '[stream-url]',
-    );
+    await _playback.play(channel);
   }
 
   void _retryManually() {
-    unawaited(_playChannel(_currentChannel));
+    unawaited(_playback.retry());
     _requestScreenFocus();
   }
 
   void _playChannelDebounced(Channel channel) {
     _channelSwitchDebounce?.cancel();
-    // Invalidate callbacks from the old stream immediately while D-pad input
-    // is being debounced.
-    _playbackSessionId++;
-    _bufferWatchdogTicker?.cancel();
-    _reconnectTimer?.cancel();
-    _stablePlaybackTimer?.cancel();
-    _completedTimer?.cancel();
-    _preferAlternateUrl = false;
-    _currentAttemptUsesAlternateUrl = false;
-    setState(() {
-      _currentChannel = channel;
-      _isBuffering = true;
-      _hasError = false;
-    });
+    // Invalidate callbacks from the old stream straight away, so a failure it
+    // reports while D-pad input is still being debounced cannot reconnect the
+    // channel the user has already moved past.
+    _playback.beginPendingSwitch(channel);
+    setState(() => _currentChannel = channel);
     _channelSwitchDebounce = Timer(const Duration(milliseconds: 300), () {
       unawaited(_playChannel(channel));
     });
@@ -626,6 +287,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     setState(() {
       _showControls = true;
       _showChannelList = false;
+      _showSettings = false;
       _osdInteractive = true;
     });
     _startHideTimer();
@@ -638,10 +300,103 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     setState(() {
       _showControls = false;
       _showChannelList = false;
+      _showSettings = false;
       _osdInteractive = false;
     });
     _requestScreenFocus();
   }
+
+  void _openSettings() {
+    _hideTimer?.cancel();
+    setState(() {
+      _showControls = true;
+      _showChannelList = false;
+      _showSettings = true;
+      _osdInteractive = false;
+      _focusedSettingRow = 0;
+    });
+    _requestScreenFocus();
+  }
+
+  void _closeSettings() {
+    setState(() => _showSettings = false);
+    _showInteractiveControls();
+  }
+
+  void _moveSettingsFocus(int delta) {
+    final rowCount = PlayerSettingsPanel.rowsFor(
+      aspectMode: _aspectMode,
+    ).length;
+    setState(() {
+      _focusedSettingRow = (_focusedSettingRow + delta).clamp(0, rowCount - 1);
+    });
+  }
+
+  /// Steps the focused setting by [delta], wrapping around its options.
+  ///
+  /// The new value is shown immediately, but reopening the stream is deferred:
+  /// arrow keys auto-repeat on a TV remote, and applying on every repeat would
+  /// fire a stop()+open() per tick — a burst of opens against one account,
+  /// which is the most reliable way to self-inflict the 403 the recovery
+  /// policy exists to avoid. Channel switching is debounced for the same
+  /// reason; this path is strictly more expensive per keypress.
+  Future<void> _adjustSetting(int delta) async {
+    final current = switch (_focusedSettingRow) {
+      0 => PlaybackPreferences.decoderMode.index,
+      1 => PlaybackPreferences.bufferProfile.index,
+      _ => _aspectMode,
+    };
+    final length = switch (_focusedSettingRow) {
+      0 => DecoderMode.values.length,
+      1 => BufferProfile.values.length,
+      _ => _aspectLabels.length,
+    };
+    await _applySetting(_focusedSettingRow, _cycle(current, delta, length));
+  }
+
+  /// Selects an exact option. Both the D-pad (via [_adjustSetting]) and a
+  /// direct tap on a chip land here, so the two input paths cannot drift.
+  Future<void> _applySetting(int rowIndex, int optionIndex) async {
+    switch (rowIndex) {
+      case 0:
+        await PlaybackPreferences.setDecoderMode(
+          DecoderMode.values[optionIndex],
+        );
+        if (!mounted) return;
+        setState(() {});
+        _scheduleSettingApply();
+
+      case 1:
+        await PlaybackPreferences.setBufferProfile(
+          BufferProfile.values[optionIndex],
+        );
+        if (!mounted) return;
+        setState(() {});
+        _scheduleSettingApply();
+
+      case 2:
+        // Aspect is a pure render change — no reopen, so no debounce needed.
+        setState(() => _aspectMode = optionIndex);
+        unawaited(_persistAspectMode());
+    }
+  }
+
+  /// Keeps the D-pad's row highlight in step with a chip the user tapped.
+  void _onSettingTapped(int rowIndex, int optionIndex) {
+    setState(() => _focusedSettingRow = rowIndex);
+    _hideTimer?.cancel();
+    unawaited(_applySetting(rowIndex, optionIndex));
+  }
+
+  void _scheduleSettingApply() {
+    _settingApplyDebounce?.cancel();
+    _settingApplyDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) unawaited(_playback.applyPreferenceChanges());
+    });
+  }
+
+  static int _cycle(int current, int delta, int length) =>
+      (current + delta + length) % length;
 
   void _openChannelList() {
     if (_allChannels.isEmpty) return;
@@ -649,6 +404,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     setState(() {
       _showControls = true;
       _showChannelList = true;
+      _showSettings = false;
       _osdInteractive = false;
       _focusedChannelIndex = _currentIndex.clamp(0, _allChannels.length - 1);
     });
@@ -659,7 +415,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   void _startHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && !_showChannelList && !_hasError) {
+      if (mounted && !_showChannelList && !_showSettings && !_hasError) {
         _hideControls();
       }
     });
@@ -701,6 +457,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
           _showControls &&
           _osdInteractive &&
           !_showChannelList &&
+          !_showSettings &&
           !_hasError &&
           _osdDefaultFocusNode.canRequestFocus) {
         _osdDefaultFocusNode.requestFocus();
@@ -719,21 +476,14 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // Invalidate all delayed work before disposing the native player.
-    _playbackSessionId++;
-    _currentAttemptId++;
     _hideTimer?.cancel();
     _channelSwitchDebounce?.cancel();
-    _bufferWatchdogTicker?.cancel();
-    _reconnectTimer?.cancel();
-    _stablePlaybackTimer?.cancel();
-    _completedTimer?.cancel();
+    _settingApplyDebounce?.cancel();
     _channelInfoTimer?.cancel();
-    _bufferingSub?.cancel();
-    _errorSub?.cancel();
-    _completedSub?.cancel();
-    _playingSub?.cancel();
-    _player.dispose();
+    // The controller invalidates its own delayed work before tearing down the
+    // native player, so it must stop being observed first.
+    _playback.state.removeListener(_onPlaybackStateChanged);
+    unawaited(_playback.dispose());
     _screenFocusNode.dispose();
     _osdFocusScopeNode.dispose();
     _osdDefaultFocusNode.dispose();
@@ -755,6 +505,13 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    if (!_sawKeyEvent) {
+      // Deferred: this runs during key dispatch, where setState is unsafe.
+      _sawKeyEvent = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
 
     final key = event.logicalKey;
     final isRepeat = event is KeyRepeatEvent;
@@ -774,7 +531,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     if (key == LogicalKeyboardKey.mediaPlayPause ||
         key == LogicalKeyboardKey.mediaPlay ||
         key == LogicalKeyboardKey.mediaPause) {
-      _player.state.playing ? _player.pause() : _player.play();
+      _playback.togglePlayPause();
       _refreshControlsAfterAction();
       return KeyEventResult.handled;
     }
@@ -782,7 +539,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     if (key == LogicalKeyboardKey.mediaStop) {
       // Mirror escape/goBack's staged close instead of exiting straight to
       // Home while the guide/OSD is still open.
-      if (_showChannelList) {
+      if (_showSettings) {
+        _closeSettings();
+      } else if (_showChannelList) {
         _closeChannelList();
       } else if (_showControls && _osdInteractive) {
         _hideControls();
@@ -825,6 +584,34 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
         key == LogicalKeyboardKey.f4 ||
         key == LogicalKeyboardKey.keyE) {
       _cycleAspect();
+      return KeyEventResult.handled;
+    }
+
+    if (_showSettings) {
+      if (key == LogicalKeyboardKey.arrowUp) {
+        _moveSettingsFocus(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        _moveSettingsFocus(1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight ||
+          key == LogicalKeyboardKey.select ||
+          key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.gameButtonA) {
+        unawaited(_adjustSetting(1));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        unawaited(_adjustSetting(-1));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.goBack) {
+        _closeSettings();
+        return KeyEventResult.handled;
+      }
       return KeyEventResult.handled;
     }
 
@@ -1114,10 +901,15 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_showChannelList && !(_showControls && _osdInteractive),
+      canPop:
+          !_showChannelList &&
+          !_showSettings &&
+          !(_showControls && _osdInteractive),
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (_showChannelList) {
+        if (_showSettings) {
+          _closeSettings();
+        } else if (_showChannelList) {
           _closeChannelList();
         } else {
           _hideControls();
@@ -1133,6 +925,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
             if (!focused &&
                 mounted &&
                 !_showChannelList &&
+                !_showSettings &&
                 !_hasError &&
                 !(_showControls && _osdInteractive)) {
               _requestScreenFocus();
@@ -1161,13 +954,12 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          _retryCount > 0
-                              ? 'إعادة الاتصال... ($_retryCount/$_maxRetries)'
-                              : 'جاري التحميل...',
+                          _loadingMessage,
                           style: AppFonts.cairo(
                             color: Colors.white70,
                             fontSize: 15,
                           ),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),
@@ -1179,6 +971,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
                       !_showControls ||
                       !_osdInteractive ||
                       _showChannelList ||
+                      _showSettings ||
                       _hasError,
                   child: AnimatedOpacity(
                     opacity: _showControls && !_hasError ? 1.0 : 0.0,
@@ -1213,6 +1006,12 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
                               children: [
                                 _buildTopBar(),
                                 const Spacer(),
+                                // Hints sit inside the same column as the
+                                // controls instead of floating at a fixed
+                                // offset. Pinned at bottom:80 they landed on
+                                // top of the control cluster on a landscape
+                                // phone, whose usable height is only ~390px.
+                                _buildRemoteHints(),
                                 _buildBottomBar(),
                               ],
                             ),
@@ -1222,49 +1021,6 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
-
-                // Remote control hints — Positioned wraps IgnorePointer (not vice versa)
-                if (_showControls && !_showChannelList && !_hasError)
-                  Positioned(
-                    bottom: 80,
-                    left: 0,
-                    right: 0,
-                    child: IgnorePointer(
-                      child: Center(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _osdInteractive
-                                ? _buildHintChip(
-                                    Icons.open_with_rounded,
-                                    'الأسهم للتنقّل',
-                                  )
-                                : _buildHintChip(Icons.arrow_upward, 'السابقة'),
-                            const SizedBox(width: 10),
-                            _osdInteractive
-                                ? _buildHintChip(
-                                    Icons.radio_button_checked,
-                                    'OK للاختيار',
-                                  )
-                                : _buildHintChip(
-                                    Icons.arrow_downward,
-                                    'التالية',
-                                  ),
-                            const SizedBox(width: 10),
-                            _osdInteractive
-                                ? _buildHintChip(
-                                    Icons.keyboard_return,
-                                    'رجوع للإخفاء',
-                                  )
-                                : _buildHintChip(
-                                    Icons.arrow_forward,
-                                    'القائمة',
-                                  ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
 
                 // Channel info mini-banner (3 sec after D-pad switch, when OSD hidden)
                 if (_showChannelInfo && !_hasError)
@@ -1277,6 +1033,14 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
                 // Channel list overlay
                 if (_showChannelList) _buildChannelListOverlay(),
 
+                // Playback settings overlay
+                if (_showSettings)
+                  PlayerSettingsPanel(
+                    rows: PlayerSettingsPanel.rowsFor(aspectMode: _aspectMode),
+                    focusedRow: _focusedSettingRow,
+                    onSelect: _onSettingTapped,
+                  ),
+
                 // Keep the terminal error above every interactive overlay.
                 if (_hasError) _buildErrorOverlay(),
               ],
@@ -1287,10 +1051,23 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     );
   }
 
+  /// What the loading spinner says, so a silent retry reads as plain loading
+  /// while a real reconnect shows its progress and a network drop says so.
+  String get _loadingMessage {
+    if (_playbackState.waitingForNetwork) {
+      return 'في انتظار عودة الاتصال…';
+    }
+    if (_playbackState.isReconnecting && _playbackState.maxAttempts > 0) {
+      return 'إعادة الاتصال… '
+          '(${_playbackState.attempt}/${_playbackState.maxAttempts})';
+    }
+    return 'جاري التحميل...';
+  }
+
   Widget _buildVideoLayer() {
     return SizedBox.expand(
       child: Video(
-        controller: _videoController,
+        controller: _playback.videoController,
         controls: NoVideoControls,
         fit: _aspectMode == 0 ? BoxFit.contain : BoxFit.cover,
       ),
@@ -1378,6 +1155,20 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     );
   }
 
+  StreamFailureKind get _errorKind =>
+      _playbackState.fatalError ?? StreamFailureKind.unknown;
+
+  IconData get _errorIcon => switch (_errorKind) {
+    StreamFailureKind.offline => Icons.wifi_off_rounded,
+    StreamFailureKind.serverBusy => Icons.groups_rounded,
+    StreamFailureKind.unauthorized => Icons.key_off_rounded,
+    StreamFailureKind.notFound => Icons.tv_off_rounded,
+    StreamFailureKind.serverError => Icons.dns_rounded,
+    StreamFailureKind.unreachable => Icons.cloud_off_rounded,
+    StreamFailureKind.playback => Icons.broken_image_rounded,
+    StreamFailureKind.unknown => Icons.signal_wifi_bad,
+  };
+
   Widget _buildErrorOverlay() {
     return FocusScope(
       node: _errorFocusScopeNode,
@@ -1396,24 +1187,34 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.signal_wifi_bad,
-                color: AppColors.accentRed,
-                size: 52,
-              ),
+              Icon(_errorIcon, color: AppColors.accentRed, size: 52),
               const SizedBox(height: 14),
               Text(
-                'تعذّر تشغيل القناة',
+                _errorKind.title,
                 style: AppFonts.cairo(
                   color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
+              // Saying *why* the stream stopped is the difference between a
+              // user retrying pointlessly and one who closes another device or
+              // fixes their credentials.
+              Text(
+                _errorKind.guidance,
+                style: AppFonts.cairo(
+                  color: Colors.white70,
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
               Text(
                 _currentChannel.name,
-                style: AppFonts.cairo(color: Colors.white54, fontSize: 13),
+                style: AppFonts.cairo(color: Colors.white38, fontSize: 12),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -1440,7 +1241,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
               ),
               const SizedBox(height: 12),
               Text(
-                'اضغط OK للمحاولة مجدداً',
+                _errorKind.isRetryable
+                    ? 'اضغط OK للمحاولة مجدداً'
+                    : 'جرّب قناة أخرى أو راجع الإعدادات',
                 style: AppFonts.cairo(color: Colors.white30, fontSize: 11),
               ),
             ],
@@ -1463,6 +1266,52 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
       onTap: onTap,
       primary: primary,
       focusNode: focusNode,
+    );
+  }
+
+  /// Whether this device is driven by a remote rather than a finger.
+  ///
+  /// The hints explain D-pad keys, which is pure noise on a touch phone where
+  /// there are no arrows to press — and on a landscape phone they also had
+  /// nowhere to go without colliding with the controls.
+  ///
+  /// Two signals, either of which is sufficient: a TV-sized screen (the same
+  /// 600px shortest-side threshold the setup screen already uses to choose
+  /// between the on-screen keyboard and the system one), or an actual key
+  /// event, which a finger never produces but any paired remote does.
+  bool get _isRemoteDriven {
+    if (_sawKeyEvent) return true;
+    final size = MediaQuery.sizeOf(context);
+    return size.shortestSide >= 600 && size.height >= 420;
+  }
+
+  Widget _buildRemoteHints() {
+    if (!_isRemoteDriven || _showChannelList || _showSettings || _hasError) {
+      return const SizedBox.shrink();
+    }
+    final hints = _osdInteractive
+        ? const [
+            (Icons.open_with_rounded, 'الأسهم للتنقّل'),
+            (Icons.radio_button_checked, 'OK للاختيار'),
+            (Icons.keyboard_return, 'رجوع للإخفاء'),
+          ]
+        : const [
+            (Icons.arrow_upward, 'السابقة'),
+            (Icons.arrow_downward, 'التالية'),
+            (Icons.arrow_forward, 'القائمة'),
+          ];
+    return IgnorePointer(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 10,
+          runSpacing: 6,
+          children: [
+            for (final (icon, label) in hints) _buildHintChip(icon, label),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1539,11 +1388,11 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
             ),
           ),
           _ControlButton(
-            icon: _favoriteUrls.contains(_currentChannel.url)
+            icon: _isCurrentFavorite
                 ? Icons.favorite_rounded
                 : Icons.favorite_border_rounded,
             onTap: () => _toggleFavorite(),
-            highlighted: _favoriteUrls.contains(_currentChannel.url),
+            highlighted: _isCurrentFavorite,
           ),
           const SizedBox(width: 8),
           ExcludeFocus(
@@ -1590,38 +1439,51 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   Widget _buildBottomBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _ControlButton(
-            icon: Icons.skip_previous_rounded,
-            onTap: _currentIndex > 0 ? _previousChannel : null,
-            size: 32,
-          ),
-          const SizedBox(width: 16),
-          _ControlButton(
-            icon: Icons.list_rounded,
-            focusNode: _osdDefaultFocusNode,
-            onTap: _openChannelList,
-            size: 28,
-            highlighted: _showChannelList,
-          ),
-          const SizedBox(width: 16),
-          // Aspect ratio cycle button
-          _AspectButton(
-            icon: _aspectIcons[_aspectMode],
-            label: _aspectLabels[_aspectMode],
-            onTap: _cycleAspect,
-          ),
-          const SizedBox(width: 16),
-          _ControlButton(
-            icon: Icons.skip_next_rounded,
-            onTap: _currentIndex < _allChannels.length - 1
-                ? _nextChannel
-                : null,
-            size: 32,
-          ),
-        ],
+      // The control cluster is sized for a TV. On a phone held in landscape
+      // the same buttons exceed the width, so shrink them to fit rather than
+      // clipping the outermost control off the screen.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _ControlButton(
+              icon: Icons.skip_previous_rounded,
+              onTap: _currentIndex > 0 ? _previousChannel : null,
+              size: 32,
+            ),
+            const SizedBox(width: 16),
+            _ControlButton(
+              icon: Icons.list_rounded,
+              focusNode: _osdDefaultFocusNode,
+              onTap: _openChannelList,
+              size: 28,
+              highlighted: _showChannelList,
+            ),
+            const SizedBox(width: 16),
+            // Aspect ratio cycle button
+            _AspectButton(
+              icon: _aspectIcons[_aspectMode],
+              label: _aspectLabels[_aspectMode],
+              onTap: _cycleAspect,
+            ),
+            const SizedBox(width: 16),
+            _ControlButton(
+              icon: Icons.tune_rounded,
+              onTap: _openSettings,
+              size: 28,
+              highlighted: _showSettings,
+            ),
+            const SizedBox(width: 16),
+            _ControlButton(
+              icon: Icons.skip_next_rounded,
+              onTap: _currentIndex < _allChannels.length - 1
+                  ? _nextChannel
+                  : null,
+              size: 32,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -7,6 +7,8 @@ import '../config/app_config.dart';
 import '../models/channel.dart';
 import '../services/channel_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/channel_identity.dart';
+import '../theme/layout_metrics.dart';
 import '../widgets/category_section.dart';
 import '../widgets/focusable_icon_button.dart';
 import '../widgets/nav_rail.dart';
@@ -32,12 +34,16 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isRefreshing = false;
   String? _errorMessage;
   DateTime? _lastBackPress;
-  Set<String> _favoriteUrls = {};
+  Set<String> _favoriteKeys = {};
   List<Channel> _favoriteChannels = [];
   List<Channel> _recentlyWatched = [];
   int _dynamicDataRequestId = 0;
   final ScrollController _homeScrollController = ScrollController();
   bool _openingPlayer = false;
+
+  /// The channel most recently opened in the player, marked in the rails so
+  /// the user can see where they left off.
+  String? _playingKey;
 
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
@@ -130,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // routes (and two live native players) before the first push lands.
     if (_openingPlayer) return;
     _openingPlayer = true;
+    setState(() => _playingKey = channelIdentityKey(channel));
     Navigator.of(context)
         .push(
           PageRouteBuilder(
@@ -163,11 +170,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final results = await Future.wait<Object>([
-        FavoritesService.getFavoriteUrls(),
+        FavoritesService.getFavoriteKeys(),
         FavoritesService.getFavoriteChannels(categories),
         RecentlyWatchedService.getChannels(),
       ]);
-      final favoriteUrls = results[0] as Set<String>;
+      final favoriteKeys = results[0] as Set<String>;
       final favoriteChannels = results[1] as List<Channel>;
       final storedRecent = results[2] as List<Channel>;
       final recentChannels = _bindRecentToCurrent(storedRecent, categories);
@@ -179,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
           (!_homeScrollController.hasClients ||
               _homeScrollController.offset <= 1);
       setState(() {
-        _favoriteUrls = favoriteUrls;
+        _favoriteKeys = favoriteKeys;
         _favoriteChannels = favoriteChannels;
         _recentlyWatched = recentChannels;
       });
@@ -349,72 +356,117 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAppBar() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Beside the nav rail on a narrow window the fixed logo, badge and
+        // refresh button together exceed the width — the tagline is already
+        // Expanded and cannot give up any more room. The channel count is the
+        // least useful of the three at that size, so it goes first.
+        final showChannelCount =
+            _totalChannels > 0 && constraints.maxWidth >= 220;
+        return _buildAppBarRow(showChannelCount: showChannelCount);
+      },
+    );
+  }
+
+  Widget _buildAppBarRow({required bool showChannelCount}) {
+    final isWide = screenClassOf(context) == ScreenClass.wide;
+    final inset = isWide ? 24.0 : 16.0;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: EdgeInsets.fromLTRB(inset, 12, inset, 10),
       child: Row(
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: isWide ? 52 : 44,
+            height: isWide ? 52 : 44,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.accentRed.withValues(alpha: 0.2),
-                  blurRadius: 12,
-                  spreadRadius: 1,
+                  color: AppColors.accentRed.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  spreadRadius: -2,
                 ),
               ],
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(13),
               child: Image.asset('assets/images/logo.png', fit: BoxFit.contain),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
+                // Promoted from a muted 12px caption to the headline it always
+                // should have been — the app bar previously led with nothing.
                 Text(
                   'شاشتك لمشاهدة المباريات',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: AppFonts.cairo(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
+                    color: AppColors.textPrimary,
+                    fontSize: isWide ? 20 : 17,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    height: 1.15,
                   ),
                 ),
+                if (_totalChannels > 0) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '$_totalChannels قناة مباشرة',
+                    textDirection: TextDirection.rtl,
+                    style: AppFonts.cairo(
+                      color: AppColors.textMuted,
+                      fontSize: isWide ? 13 : 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          if (_totalChannels > 0)
+          if (showChannelCount && isWide) ...[
+            const SizedBox(width: 10),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.surfaceDark,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                color: AppColors.accentRed.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: AppColors.accentRed.withValues(alpha: 0.4),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    Icons.live_tv,
-                    color: AppColors.accentRedLight,
-                    size: 15,
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: AppColors.accentRedLight,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 6),
                   Text(
-                    '$_totalChannels',
+                    'مباشر',
                     style: AppFonts.cairo(
-                      color: AppColors.textSecondary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
+                      color: AppColors.accentRedLight,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],
               ),
             ),
+          ],
+          const SizedBox(width: 8),
           FocusableIconButton(
             icon: Icons.refresh_rounded,
             semanticLabel: 'تحديث القنوات',
@@ -496,7 +548,8 @@ class _HomeScreenState extends State<HomeScreen> {
           category: category,
           onChannelTap: _openPlayer,
           isFirstCategory: i == 0 && extra == 0,
-          favoriteUrls: _favoriteUrls,
+          favoriteKeys: _favoriteKeys,
+          playingKey: _playingKey,
         );
       },
     );
@@ -523,8 +576,9 @@ class _HomeScreenState extends State<HomeScreen> {
       category: cat,
       onChannelTap: _openPlayer,
       isFirstCategory: isFirst,
-      favoriteUrls: _favoriteUrls,
+      favoriteKeys: _favoriteKeys,
       iconOverride: icon,
+      playingKey: _playingKey,
     );
   }
 
