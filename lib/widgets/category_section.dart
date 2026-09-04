@@ -78,13 +78,21 @@ class CategorySection extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Text(
-                '${category.channels.length} قناة',
-                textDirection: TextDirection.rtl,
-                style: AppFonts.cairo(
-                  fontSize: isWide ? 13 : 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
+              // Flexible, not a bare Text: at a large system text scale the
+              // count claimed its full intrinsic width and pushed the header
+              // past the edge of a small screen. It shrinks before the title
+              // does, since the category name is the part worth reading.
+              Flexible(
+                child: Text(
+                  '${category.channels.length} قناة',
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppFonts.cairo(
+                    fontSize: isWide ? 13 : 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textMuted,
+                  ),
                 ),
               ),
             ],

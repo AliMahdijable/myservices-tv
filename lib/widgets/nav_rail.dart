@@ -116,20 +116,29 @@ class _RailItemState extends State<_RailItem> {
                     )
                   : null,
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(widget.icon, color: color, size: 21),
-                const SizedBox(height: 4),
-                Text(
-                  widget.label,
-                  style: AppFonts.cairo(
-                    color: color,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
+            // The chip is a fixed 60x56, so it cannot grow with the system
+            // text scale: without the clamp the label wrapped onto three lines
+            // and overflowed the bottom by roughly 50dp.
+            child: MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(widget.icon, color: color, size: 21),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: AppFonts.cairo(
+                      color: color,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

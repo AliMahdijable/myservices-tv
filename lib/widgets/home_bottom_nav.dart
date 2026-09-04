@@ -28,25 +28,37 @@ class HomeBottomNav extends StatelessWidget {
             top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _BottomNavItem(
-              icon: Icons.home_rounded,
-              label: 'الرئيسية',
-              active: true,
-            ),
-            _BottomNavItem(
-              icon: Icons.search_rounded,
-              label: 'بحث',
-              onTap: searchEnabled ? onSearchTap : null,
-            ),
-            _BottomNavItem(
-              icon: Icons.settings_rounded,
-              label: 'الإعدادات',
-              onTap: onSettingsTap,
-            ),
-          ],
+        // The bar is a fixed 62dp tall and its three items share one row, so
+        // neither axis can grow to absorb a large system text scale. Clamp the
+        // scale and let each item flex, rather than letting an accessibility
+        // setting paint an overflow stripe across the navigation.
+        child: MediaQuery.withClampedTextScaling(
+          maxScaleFactor: 1.3,
+          child: Row(
+            children: [
+              Expanded(
+                child: _BottomNavItem(
+                  icon: Icons.home_rounded,
+                  label: 'الرئيسية',
+                  active: true,
+                ),
+              ),
+              Expanded(
+                child: _BottomNavItem(
+                  icon: Icons.search_rounded,
+                  label: 'بحث',
+                  onTap: searchEnabled ? onSearchTap : null,
+                ),
+              ),
+              Expanded(
+                child: _BottomNavItem(
+                  icon: Icons.settings_rounded,
+                  label: 'الإعدادات',
+                  onTap: onSettingsTap,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -122,6 +134,9 @@ class _BottomNavItemState extends State<_BottomNavItem> {
               const SizedBox(height: 3),
               Text(
                 widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
                 style: AppFonts.cairo(
                   color: color,
                   fontSize: 9,
