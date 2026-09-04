@@ -43,6 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Gradle's own build output — a problems-report.html from here was tracked by
+# mistake and churned on every build.
+/android/build/
+
+# Design canvas working files; the canvas itself is published as an Artifact
+# and the seeded page is ~2.5 MB of editor payload.
+/.design/
 
 # Claude Code session data
 .claude/
