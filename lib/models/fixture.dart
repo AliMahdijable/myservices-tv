@@ -158,29 +158,59 @@ class StandingRow {
 class LeagueTable {
   final String league;
   final int rank;
-  final List<StandingRow> rows;
+
+  /// One ladder per group. Most competitions have exactly one; a competition
+  /// played in regional groups has several.
+  ///
+  /// The server sends every club of a competition in one flat list, so the
+  /// Asian Champions League — two regions of sixteen — arrived as thirty-two
+  /// rows carrying two of every position, and painting them as one ladder gave
+  /// the league two leaders, two runners-up and so on down. The regions are
+  /// still recoverable from the list: it is ordered by position and holds each
+  /// region's club for a position before moving to the next, so the nth club
+  /// to claim a given position belongs to the nth group.
+  final List<List<StandingRow>> groups;
 
   const LeagueTable({
     required this.league,
     required this.rank,
-    required this.rows,
+    required this.groups,
   });
+
+  /// Every club of the competition, groups laid end to end.
+  List<StandingRow> get rows => [for (final group in groups) ...group];
+
+  bool get isGrouped => groups.length > 1;
 
   static LeagueTable? fromJson(Map<String, dynamic> json) {
     final raw = json['rows'];
     if (raw is! List) return null;
-    final rows = raw
+
+    final parsed = raw
         .whereType<Map>()
         .map((r) => StandingRow.fromJson(Map<String, dynamic>.from(r)))
         .whereType<StandingRow>()
-        .toList()
-      ..sort((a, b) => a.position.compareTo(b.position));
-    if (rows.isEmpty) return null;
+        .toList();
+    if (parsed.isEmpty) return null;
+
+    final seen = <int, int>{};
+    final groups = <List<StandingRow>>[];
+    for (final row in parsed) {
+      final index = seen[row.position] ?? 0;
+      seen[row.position] = index + 1;
+      while (groups.length <= index) {
+        groups.add(<StandingRow>[]);
+      }
+      groups[index].add(row);
+    }
+    for (final group in groups) {
+      group.sort((a, b) => a.position.compareTo(b.position));
+    }
 
     return LeagueTable(
       league: json['league']?.toString() ?? '',
       rank: (json['rank'] as num?)?.toInt() ?? 999,
-      rows: rows,
+      groups: groups,
     );
   }
 }

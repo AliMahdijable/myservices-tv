@@ -29,25 +29,47 @@ class FixturesService {
   static const Duration cacheDuration = Duration(hours: 1);
 
   static const Duration _probeTimeout = Duration(seconds: 2);
+  static const Duration _retryDelay = Duration(milliseconds: 700);
   static const Duration _requestTimeout = Duration(seconds: 12);
 
   static bool? _availableCache;
+
+  /// The probe currently in flight, so two callers cannot race.
+  ///
+  /// The home screen asks on start and again on resume; without this the two
+  /// probes overlap and whichever finishes last wins, so a slow failure could
+  /// overwrite a fresh success and hide the section until the next resume.
+  static Future<bool>? _inFlight;
 
   /// Whether the home server is reachable from wherever the device is now.
   ///
   /// A TCP connect rather than an HTTP request: it answers in milliseconds on
   /// the LAN and fails just as fast off it, so the nav bar never stalls
   /// waiting on a server that is not there.
-  static Future<bool> isAvailable({bool forceRecheck = false}) async {
-    if (!forceRecheck && _availableCache != null) return _availableCache!;
-    try {
-      final socket = await Socket.connect(host, 80, timeout: _probeTimeout);
-      socket.destroy();
-      _availableCache = true;
-    } catch (_) {
-      _availableCache = false;
+  static Future<bool> isAvailable({bool forceRecheck = false}) {
+    if (!forceRecheck && _availableCache != null) {
+      return Future.value(_availableCache!);
     }
-    return _availableCache!;
+    return _inFlight ??= _probe().whenComplete(() => _inFlight = null);
+  }
+
+  static Future<bool> _probe() async {
+    // A phone woken at the front door answers the first probe before its radio
+    // has associated, and one refusal used to hide the section for the rest of
+    // the session. A second attempt costs a moment on a network that really is
+    // absent and rescues the far more common case of one that is merely slow.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final socket = await Socket.connect(host, 80, timeout: _probeTimeout);
+        socket.destroy();
+        _availableCache = true;
+        return true;
+      } catch (_) {
+        if (attempt == 0) await Future<void>.delayed(_retryDelay);
+      }
+    }
+    _availableCache = false;
+    return false;
   }
 
   /// Sets the reachability answer without probing.
@@ -57,7 +79,10 @@ class FixturesService {
   /// test binding's invariant check, and a unit test should not depend on
   /// whether the machine running it happens to be on the owner's LAN.
   @visibleForTesting
-  static void debugSetAvailable(bool? value) => _availableCache = value;
+  static void debugSetAvailable(bool? value) {
+    _availableCache = value;
+    _inFlight = null;
+  }
 
   /// Forgets the reachability answer, so the next check probes again.
   ///
@@ -116,10 +141,7 @@ class FixturesService {
         _cacheKey,
         utf8.decode(bytes, allowMalformed: true),
       );
-      await prefs.setInt(
-        _cacheTimeKey,
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      await prefs.setInt(_cacheTimeKey, DateTime.now().millisecondsSinceEpoch);
     } catch (error) {
       debugPrint('[Fixtures] cache write failed: $error');
     }
