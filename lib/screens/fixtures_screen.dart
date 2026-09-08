@@ -698,31 +698,46 @@ class _MatchCard extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // Kickoff on one side, state on the other, both able to give way:
+          // at a large accessibility scale the two together are wider than a
+          // small phone, and a Spacer between fixed children cannot absorb it.
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                timeLabel,
-                style: AppFonts.cairo(
-                  fontSize: isWide ? 15 : 14,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.textPrimary,
+              Flexible(
+                child: Text(
+                  timeLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppFonts.cairo(
+                    fontSize: isWide ? 15 : 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                decoration: BoxDecoration(
-                  color: live
-                      ? AppColors.accentRed
-                      : Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  fixture.state.label,
-                  style: AppFonts.cairo(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: live ? Colors.white : AppColors.textSecondary,
+              const SizedBox(width: 8),
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: live
+                        ? AppColors.accentRed
+                        : Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    fixture.state.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppFonts.cairo(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: live ? Colors.white : AppColors.textSecondary,
+                    ),
                   ),
                 ),
               ),

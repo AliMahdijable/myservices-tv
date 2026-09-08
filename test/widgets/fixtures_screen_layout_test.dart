@@ -177,6 +177,35 @@ void main() {
     expect(find.text('فريق قديم'), findsNothing);
   });
 
+  group('the matches page under a large text scale', () {
+    setUp(() {
+      final today = DateTime.now();
+      String stamp(int back) {
+        final d = today.subtract(Duration(days: back));
+        return '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+            '${d.day.toString().padLeft(2, '0')}';
+      }
+
+      seed(
+        matches: [
+          for (var i = 5; i >= 0; i--)
+            match(stamp(i), 'نوتنغهام فوريست', 'برايتون'),
+        ],
+      );
+    });
+
+    // The day chips live in a fixed 66dp strip and carry two lines of text,
+    // and the match card's time and state sit in one row — none of it can
+    // grow to absorb an accessibility scale.
+    for (final scale in const [1.0, 1.5, 2.0, 3.0]) {
+      testWidgets('day strip and cards survive ${scale}x', (tester) async {
+        await pump(tester, scale: scale);
+        expect(tester.takeException(), isNull);
+        expect(find.text('اليوم'), findsOneWidget);
+      });
+    }
+  });
+
   testWidgets('the day strip scrolls the selected day into view', (
     tester,
   ) async {
