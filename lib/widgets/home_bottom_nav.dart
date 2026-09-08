@@ -9,11 +9,17 @@ class HomeBottomNav extends StatelessWidget {
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
 
+  /// Null hides the destination entirely. The fixtures feature is served by
+  /// the home server, so off that network there is nothing behind it — an
+  /// always-visible tab that only ever errors is worse than no tab.
+  final VoidCallback? onFixturesTap;
+
   const HomeBottomNav({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
+    this.onFixturesTap,
   });
 
   @override

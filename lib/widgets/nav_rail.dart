@@ -10,11 +10,15 @@ class NavRail extends StatelessWidget {
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
 
+  /// Null hides the destination — see [HomeBottomNav.onFixturesTap].
+  final VoidCallback? onFixturesTap;
+
   const NavRail({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
+    this.onFixturesTap,
   });
 
   @override
@@ -38,6 +42,12 @@ class NavRail extends StatelessWidget {
             onTap: searchEnabled ? onSearchTap : null,
           ),
           const Spacer(),
+          if (onFixturesTap != null)
+            _RailItem(
+              icon: Icons.sports_soccer_rounded,
+              label: 'المباريات',
+              onTap: onFixturesTap,
+            ),
           _RailItem(
             icon: Icons.settings_rounded,
             label: 'الإعدادات',

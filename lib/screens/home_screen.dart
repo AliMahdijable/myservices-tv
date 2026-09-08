@@ -6,6 +6,7 @@ import 'package:shimmer/shimmer.dart';
 import '../config/app_config.dart';
 import '../models/channel.dart';
 import '../services/channel_service.dart';
+import '../services/fixtures_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/channel_identity.dart';
 import '../theme/layout_metrics.dart';
@@ -14,6 +15,7 @@ import '../widgets/focusable_icon_button.dart';
 import '../widgets/nav_rail.dart';
 import '../widgets/home_bottom_nav.dart';
 import 'player_screen.dart';
+import 'fixtures_screen.dart';
 import 'setup_screen.dart';
 import 'search_screen.dart';
 import '../services/favorites_service.dart';
@@ -45,6 +47,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the user can see where they left off.
   String? _playingKey;
 
+  /// Whether the home server that serves fixtures is reachable. The
+  /// destination stays hidden until it is — the feature is LAN-only.
+  bool _fixturesAvailable = false;
+
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
 
@@ -59,6 +65,28 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       unawaited(_loadChannels());
     }
+    unawaited(_checkFixtures());
+  }
+
+  Future<void> _checkFixtures() async {
+    final available = await FixturesService.isAvailable();
+    if (mounted && available != _fixturesAvailable) {
+      setState(() => _fixturesAvailable = available);
+    }
+  }
+
+  void _openFixtures() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const Scaffold(
+          backgroundColor: AppColors.primaryDark,
+          body: FixturesScreen(),
+        ),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 200),
+      ),
+    );
   }
 
   @override
@@ -335,6 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(child: content),
                       NavRail(
+                        onFixturesTap:
+                            _fixturesAvailable ? _openFixtures : null,
                         searchEnabled: _categories.isNotEmpty,
                         onSearchTap: _openSearch,
                         onSettingsTap: _openSettings,
@@ -347,6 +377,7 @@ class _HomeScreenState extends State<HomeScreen> {
         bottomNavigationBar: isWide
             ? null
             : HomeBottomNav(
+                onFixturesTap: _fixturesAvailable ? _openFixtures : null,
                 searchEnabled: _categories.isNotEmpty,
                 onSearchTap: _openSearch,
                 onSettingsTap: _openSettings,

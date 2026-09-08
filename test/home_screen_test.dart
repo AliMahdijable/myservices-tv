@@ -5,11 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:myservices_tv/models/channel.dart';
 import 'package:myservices_tv/screens/home_screen.dart';
 import 'package:myservices_tv/services/favorites_service.dart';
+import 'package:myservices_tv/services/fixtures_service.dart';
 import 'package:myservices_tv/services/recently_watched_service.dart';
 import 'package:myservices_tv/theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // The fixtures destination probes the owner's LAN. A widget test must not
+  // open a socket: its timeout leaves a pending timer, and the result would
+  // otherwise depend on which network the machine is on.
+  setUp(() => FixturesService.debugSetAvailable(false));
+
   testWidgets('preloaded home restores favorites and recently watched', (
     tester,
   ) async {
