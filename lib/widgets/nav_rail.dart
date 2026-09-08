@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
+import 'home_destination.dart';
 
 /// Side navigation rail for wide (tablet/TV) screens. Replaces the search
 /// and settings icon buttons that used to sit in the home app bar, freeing
 /// that bar down to just the logo/tagline/refresh.
 class NavRail extends StatelessWidget {
+  /// Which page the shell is showing — see [HomeBottomNav.active].
+  final HomeDestination active;
+
   final bool searchEnabled;
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
@@ -13,12 +17,17 @@ class NavRail extends StatelessWidget {
   /// Null hides the destination — see [HomeBottomNav.onFixturesTap].
   final VoidCallback? onFixturesTap;
 
+  /// Returns to the home page from another destination.
+  final VoidCallback? onHomeTap;
+
   const NavRail({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
     this.onFixturesTap,
+    this.onHomeTap,
+    this.active = HomeDestination.home,
   });
 
   @override
@@ -34,7 +43,12 @@ class NavRail extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _RailItem(icon: Icons.home_rounded, label: 'الرئيسية', active: true),
+          _RailItem(
+            icon: Icons.home_rounded,
+            label: 'الرئيسية',
+            active: active == HomeDestination.home,
+            onTap: onHomeTap,
+          ),
           const SizedBox(height: 18),
           _RailItem(
             icon: Icons.search_rounded,
@@ -46,6 +60,7 @@ class NavRail extends StatelessWidget {
             _RailItem(
               icon: Icons.sports_soccer_rounded,
               label: 'المباريات',
+              active: active == HomeDestination.fixtures,
               onTap: onFixturesTap,
             ),
           _RailItem(

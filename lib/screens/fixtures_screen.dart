@@ -14,7 +14,12 @@ import '../theme/layout_metrics.dart';
 /// no API key, no third-party call and no team-name translation here: the
 /// server already writes Arabic names that match the web front-end exactly.
 class FixturesScreen extends StatefulWidget {
-  const FixturesScreen({super.key});
+  /// True when the screen is a page of the home shell rather than its own
+  /// route. The shell paints the background for every destination, so painting
+  /// it again here would stack two gradients and darken this page alone.
+  final bool embedded;
+
+  const FixturesScreen({super.key, this.embedded = false});
 
   @override
   State<FixturesScreen> createState() => _FixturesScreenState();
@@ -44,6 +49,10 @@ class _FixturesScreenState extends State<FixturesScreen> {
   void dispose() {
     _daysController.dispose();
     super.dispose();
+  }
+
+  void _selectTab(_Tab tab) {
+    if (_tab != tab) setState(() => _tab = tab);
   }
 
   Future<void> _load({bool forceRefresh = false}) async {
@@ -113,19 +122,24 @@ class _FixturesScreenState extends State<FixturesScreen> {
     final isWide = screenClassOf(context) == ScreenClass.wide;
     final inset = isWide ? 24.0 : 16.0;
 
+    final body = SafeArea(
+      // The shell's bar already clears the bottom inset for every page.
+      bottom: !widget.embedded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildHeader(isWide, inset),
+          if (_data != null && _data!.tables.isNotEmpty)
+            _buildTabs(isWide, inset),
+          Expanded(child: _buildBody(isWide, inset)),
+        ],
+      ),
+    );
+
+    if (widget.embedded) return body;
     return Container(
       decoration: const BoxDecoration(gradient: AppColors.backgroundGradient),
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(isWide, inset),
-            if (_data != null && _data!.tables.isNotEmpty)
-              _buildTabs(isWide, inset),
-            Expanded(child: _buildBody(isWide, inset)),
-          ],
-        ),
-      ),
+      child: body,
     );
   }
 
@@ -174,14 +188,14 @@ class _FixturesScreenState extends State<FixturesScreen> {
             label: 'المباريات',
             active: _tab == _Tab.matches,
             isWide: isWide,
-            onTap: () => setState(() => _tab = _Tab.matches),
+            onTap: () => _selectTab(_Tab.matches),
           ),
           const SizedBox(width: 8),
           _TabButton(
             label: 'ترتيب الأندية',
             active: _tab == _Tab.table,
             isWide: isWide,
-            onTap: () => setState(() => _tab = _Tab.table),
+            onTap: () => _selectTab(_Tab.table),
           ),
         ],
       ),
@@ -197,6 +211,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
     if (_data == null) {
       return _buildError(inset);
     }
+
     return _tab == _Tab.table
         ? _buildTables(isWide, inset)
         : _buildMatches(isWide, inset);

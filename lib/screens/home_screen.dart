@@ -12,6 +12,7 @@ import '../utils/channel_identity.dart';
 import '../theme/layout_metrics.dart';
 import '../widgets/category_section.dart';
 import '../widgets/focusable_icon_button.dart';
+import '../widgets/home_destination.dart';
 import '../widgets/nav_rail.dart';
 import '../widgets/home_bottom_nav.dart';
 import 'player_screen.dart';
@@ -30,7 +31,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver {
   List<ChannelCategory> _categories = [];
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -51,12 +53,29 @@ class _HomeScreenState extends State<HomeScreen> {
   /// destination stays hidden until it is — the feature is LAN-only.
   bool _fixturesAvailable = false;
 
+  /// The destination the shell is showing.
+  HomeDestination _destination = HomeDestination.home;
+
+  /// Drives the swipe between destinations. A horizontal drag on the page
+  /// background moves between them; a drag that starts on a channel rail or
+  /// the day strip belongs to that rail, and the gesture arena gives it to the
+  /// inner scrollable, which is what the user means by dragging a row.
+  ///
+  /// The app sets no [Directionality], so it lays out left-to-right and Arabic
+  /// is right-aligned only by the strength of its own characters. Page 0 is
+  /// therefore on the left, matching the bar's leftmost item, and dragging
+  /// leftwards advances along the bar. Wrapping this screen in an RTL
+  /// [Directionality] would mirror both, which is why the tests pump it the
+  /// same way the app does rather than forcing a direction.
+  final PageController _shellController = PageController();
+
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.preloadedCategories != null &&
         widget.preloadedCategories!.isNotEmpty) {
       _categories = widget.preloadedCategories!;
@@ -68,29 +87,51 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_checkFixtures());
   }
 
-  Future<void> _checkFixtures() async {
-    final available = await FixturesService.isAvailable();
-    if (mounted && available != _fixturesAvailable) {
-      setState(() => _fixturesAvailable = available);
+  /// Re-asks whether the home server is reachable when the app comes back.
+  ///
+  /// A phone that left the house between one session and the next must stop
+  /// offering a section that can no longer load, and one that came home must
+  /// get it back — neither happens if the first answer is kept forever.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      FixturesService.invalidateAvailability();
+      unawaited(_checkFixtures());
     }
   }
 
-  void _openFixtures() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const Scaffold(
-          backgroundColor: AppColors.primaryDark,
-          body: FixturesScreen(),
-        ),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
+  Future<void> _checkFixtures() async {
+    final available = await FixturesService.isAvailable();
+    if (!mounted || available == _fixturesAvailable) return;
+    setState(() {
+      _fixturesAvailable = available;
+      // Leaving the network while the section is open would otherwise leave
+      // the shell pointing at a page the bar no longer offers.
+      if (!available) _destination = HomeDestination.home;
+    });
+    if (!available && _shellController.hasClients) {
+      _shellController.jumpToPage(HomeDestination.home.index);
+    }
+  }
+
+  void _goTo(HomeDestination destination) {
+    if (_destination == destination) return;
+    if (destination == HomeDestination.fixtures && !_fixturesAvailable) return;
+    setState(() => _destination = destination);
+    if (_shellController.hasClients) {
+      _shellController.animateToPage(
+        destination.index,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _shellController.dispose();
     _homeScrollController.dispose();
     super.dispose();
   }
@@ -344,10 +385,42 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
 
+    // Each destination keeps its own insets: the home page wants the 16dp
+    // gutter its rails are drawn against, the fixtures page sets its own.
+    final homePage = SafeArea(
+      minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      bottom: isWide,
+      child: content,
+    );
+
+    final pages = <Widget>[
+      homePage,
+      if (_fixturesAvailable) const FixturesScreen(embedded: true),
+    ];
+
+    final shell = pages.length == 1
+        ? homePage
+        : PageView(
+            controller: _shellController,
+            onPageChanged: (index) {
+              final destination = HomeDestination.values[index];
+              if (_destination != destination) {
+                setState(() => _destination = destination);
+              }
+            },
+            children: pages,
+          );
+
     return PopScope(
+      // Back returns to the home page before it offers to leave the app —
+      // otherwise the fixtures section would exit the app from a subpage.
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        if (_destination != HomeDestination.home) {
+          _goTo(HomeDestination.home);
+          return;
+        }
         _handleBackOnHome();
       },
       child: Scaffold(
@@ -355,29 +428,35 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: const BoxDecoration(
             gradient: AppColors.backgroundGradient,
           ),
-          child: SafeArea(
-            minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            bottom: isWide,
-            child: isWide
-                ? Row(
-                    children: [
-                      Expanded(child: content),
-                      NavRail(
-                        onFixturesTap:
-                            _fixturesAvailable ? _openFixtures : null,
+          child: isWide
+              ? Row(
+                  children: [
+                    Expanded(child: shell),
+                    SafeArea(
+                      minimum: const EdgeInsets.symmetric(vertical: 8),
+                      child: NavRail(
+                        active: _destination,
+                        onHomeTap: () => _goTo(HomeDestination.home),
+                        onFixturesTap: _fixturesAvailable
+                            ? () => _goTo(HomeDestination.fixtures)
+                            : null,
                         searchEnabled: _categories.isNotEmpty,
                         onSearchTap: _openSearch,
                         onSettingsTap: _openSettings,
                       ),
-                    ],
-                  )
-                : content,
-          ),
+                    ),
+                  ],
+                )
+              : shell,
         ),
         bottomNavigationBar: isWide
             ? null
             : HomeBottomNav(
-                onFixturesTap: _fixturesAvailable ? _openFixtures : null,
+                active: _destination,
+                onHomeTap: () => _goTo(HomeDestination.home),
+                onFixturesTap: _fixturesAvailable
+                    ? () => _goTo(HomeDestination.fixtures)
+                    : null,
                 searchEnabled: _categories.isNotEmpty,
                 onSearchTap: _openSearch,
                 onSettingsTap: _openSettings,
