@@ -8,6 +8,7 @@ import '../config/app_config.dart';
 import '../services/channel_service.dart';
 import '../services/xtream_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/device_type.dart';
 import '../widgets/focusable_icon_button.dart';
 import '../widgets/tv_keyboard.dart';
 import 'splash_screen.dart';
@@ -36,12 +37,15 @@ class _SetupScreenState extends State<SetupScreen> {
   String? _errorMessage;
 
   /// على iOS، وعلى هواتف أندرويد (شاشة ضيقة أساسها اللمس)، نستعمل كيبورد
-  /// النظام الطبيعي. TvKeyboard المخصّص يبقى للشاشات الواسعة (TV/تابلت حيث
-  /// التحكم بالـD-pad)، لأنه مبني بمقاسات ثابتة تفيض على شاشة هاتف ضيقة.
+  /// النظام الطبيعي. TvKeyboard المخصّص يبقى لأجهزة Android TV الحقيقية
+  /// (حسب فحص نظام التشغيل نفسه، لا مقاس الشاشة -- أجهزة TV حقيقية/محاكاة
+  /// كثير منها يرجع نفس نطاق shortestSide المنطقي لهواتف عادية) وللتابلت.
   bool _useSystemKeyboard(BuildContext context) {
     if (kIsWeb) return false;
     if (Platform.isIOS) return true;
-    return Platform.isAndroid && MediaQuery.sizeOf(context).shortestSide < 600;
+    if (!Platform.isAndroid) return false;
+    if (DeviceType.isAndroidTvSync) return false;
+    return MediaQuery.sizeOf(context).shortestSide < 600;
   }
 
   @override

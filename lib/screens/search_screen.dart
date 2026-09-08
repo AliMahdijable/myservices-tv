@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../models/channel.dart';
 import '../theme/app_theme.dart';
+import '../utils/device_type.dart';
 import '../utils/search_helpers.dart';
 import '../widgets/focusable_icon_button.dart';
 import '../widgets/tv_keyboard.dart';
@@ -34,12 +35,15 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _openingPlayer = false;
 
   /// على iOS، وعلى هواتف أندرويد (شاشة ضيقة أساسها اللمس)، نستعمل كيبورد
-  /// النظام الطبيعي بدل TvKeyboard المخصّص المبني بمقاسات ثابتة تفيض على
-  /// شاشة هاتف ضيقة.
+  /// النظام الطبيعي بدل TvKeyboard المخصّص. أجهزة Android TV الحقيقية تُحدَّد
+  /// بفحص نظام التشغيل نفسه لا مقاس الشاشة -- كثير منها يرجع نفس نطاق
+  /// shortestSide المنطقي لهواتف عادية.
   bool _useSystemKeyboard(BuildContext context) {
     if (kIsWeb) return false;
     if (Platform.isIOS) return true;
-    return Platform.isAndroid && MediaQuery.sizeOf(context).shortestSide < 600;
+    if (!Platform.isAndroid) return false;
+    if (DeviceType.isAndroidTvSync) return false;
+    return MediaQuery.sizeOf(context).shortestSide < 600;
   }
 
   @override
