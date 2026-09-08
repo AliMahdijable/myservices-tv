@@ -77,6 +77,7 @@ class RecoveryPolicy {
   int _playbackFailures = 0;
   bool _alternateFormatProven = false;
   bool _softwareDecoderEngaged = false;
+  bool _lastAttemptUsedAlternateFormat = false;
 
   /// Attempts already spent on the current channel.
   int get attempt => _attempt;
@@ -96,6 +97,7 @@ class RecoveryPolicy {
     _playbackFailures = 0;
     _alternateFormatProven = false;
     _softwareDecoderEngaged = false;
+    _lastAttemptUsedAlternateFormat = false;
   }
 
   /// Called once a stream has played continuously with real progress.
@@ -107,6 +109,7 @@ class RecoveryPolicy {
     _attempt = 0;
     _playbackFailures = 0;
     _alternateFormatProven = onAlternateFormat;
+    _lastAttemptUsedAlternateFormat = false;
   }
 
   /// Maps a failure to the next step.
@@ -197,9 +200,24 @@ class RecoveryPolicy {
   /// Switching container format is worth an attempt only when the failure
   /// could plausibly be format-specific, and only after the original format
   /// has genuinely failed twice.
+  ///
+  /// Once eligible, this ALTERNATES rather than committing permanently: many
+  /// Xtream panels only ever serve one of the two container formats for a
+  /// given stream (the other 404s or times out regardless of the real
+  /// channel's health), so a naive "switch and stay switched" rule burns the
+  /// rest of the attempt budget on a format that can never work if the format
+  /// picked at attempt 2 happens to be the unsupported one -- even though the
+  /// original format may have already recovered from whatever caused the
+  /// first two failures. Toggling means neither format can monopolize more
+  /// than roughly half of the remaining attempts.
   bool _shouldUseAlternateFormat(StreamFailureKind kind) {
     if (_alternateFormatProven) return true;
-    return kind.suggestsAlternateFormat && _attempt >= 2;
+    if (!kind.suggestsAlternateFormat || _attempt < 2) {
+      _lastAttemptUsedAlternateFormat = false;
+      return false;
+    }
+    _lastAttemptUsedAlternateFormat = !_lastAttemptUsedAlternateFormat;
+    return _lastAttemptUsedAlternateFormat;
   }
 
   /// Falls back to software decoding after the hardware decoder has failed

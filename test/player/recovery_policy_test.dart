@@ -131,6 +131,31 @@ void main() {
       expect(second.useAlternateFormat, isTrue);
     });
 
+    test(
+      'alternates rather than committing when the switched format also fails',
+      () {
+        // Many Xtream panels only ever serve one container format for a given
+        // stream -- the other 404s/times out regardless of the channel's real
+        // health. If the format picked at attempt 2 happens to be the
+        // unsupported one, the remaining budget must not be spent entirely on
+        // a format that can never work while the original format (which may
+        // have already recovered) never gets tried again.
+        final first = fail(policy, StreamFailureKind.playback); // attempt 1
+        expect(first.useAlternateFormat, isFalse);
+        final second = fail(policy, StreamFailureKind.playback); // attempt 2
+        expect(second.useAlternateFormat, isTrue);
+        final third = fail(policy, StreamFailureKind.playback); // attempt 3
+        expect(
+          third.useAlternateFormat,
+          isFalse,
+          reason: 'give the original format another chance rather than '
+              'repeating the format that just failed',
+        );
+        final fourth = fail(policy, StreamFailureKind.playback); // attempt 4
+        expect(fourth.useAlternateFormat, isTrue);
+      },
+    );
+
     test('a format proven stable is kept for later reconnects', () {
       policy.markStable(onAlternateFormat: true);
       expect(policy.alternateFormatProven, isTrue);
