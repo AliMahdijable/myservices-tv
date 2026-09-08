@@ -16,6 +16,23 @@ class XtreamService {
     'User-Agent': AppConfig.userAgent,
   };
 
+  // Flutter web's http client goes through the browser's own fetch/XHR cache.
+  // Xtream panels rarely send Cache-Control: no-store on their API responses
+  // (they're built for native apps, not browsers), so a repeat GET to the
+  // same URL can be served straight from the browser cache -- silently
+  // ignoring forceRefresh, which only controls our own SharedPreferences
+  // cache, not whether the network call itself is real. A unique query
+  // param per request defeats that regardless of platform.
+  static Uri _bust(String url) {
+    final uri = Uri.parse(url);
+    return uri.replace(
+      queryParameters: {
+        ...uri.queryParameters,
+        '_': DateTime.now().millisecondsSinceEpoch.toString(),
+      },
+    );
+  }
+
   /// Returns true when the server responds with valid user_info.
   /// Tries standard path first, then /api/ prefix fallback.
   static Future<bool> testConnection(
@@ -32,7 +49,7 @@ class XtreamService {
           fallback: fallback,
         );
         final res = await http
-            .get(Uri.parse(url), headers: _headers)
+            .get(_bust(url), headers: _headers)
             .timeout(const Duration(seconds: 10));
         if (res.statusCode == 200) {
           final data = _tryDecode(res.bodyBytes);
@@ -54,7 +71,7 @@ class XtreamService {
     ]) {
       try {
         final res = await http
-            .get(Uri.parse(base), headers: _headers)
+            .get(_bust(base), headers: _headers)
             .timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           final data = _tryDecode(res.bodyBytes);
@@ -94,10 +111,10 @@ class XtreamService {
     // ── Parallel HTTP requests ────────────────────────────────────────────
     final responses = await Future.wait([
       http
-          .get(Uri.parse('$apiBase&action=get_live_categories'), headers: _headers)
+          .get(_bust('$apiBase&action=get_live_categories'), headers: _headers)
           .timeout(const Duration(seconds: 20)),
       http
-          .get(Uri.parse('$apiBase&action=get_live_streams'), headers: _headers)
+          .get(_bust('$apiBase&action=get_live_streams'), headers: _headers)
           .timeout(const Duration(seconds: 30)),
     ]);
 

@@ -32,6 +32,16 @@ class M3uService {
     'upgrade',
   };
 
+  static Uri _bust(String url) {
+    final uri = Uri.parse(url);
+    return uri.replace(
+      queryParameters: {
+        ...uri.queryParameters,
+        '_': DateTime.now().millisecondsSinceEpoch.toString(),
+      },
+    );
+  }
+
   static Future<List<Channel>> fetchChannels({
     bool forceRefresh = false,
   }) async {
@@ -45,8 +55,16 @@ class M3uService {
 
     for (final url in urls) {
       try {
+        // On Flutter web, package:http goes through the browser's own
+        // fetch/XHR cache. Panels rarely send Cache-Control: no-store on
+        // this endpoint, so a repeat GET can be served from the browser
+        // cache regardless of forceRefresh (which only governs our own
+        // SharedPreferences cache). A unique query param forces a real hit.
         final response = await http
-            .get(Uri.parse(url), headers: {'User-Agent': AppConfig.userAgent})
+            .get(
+              _bust(url),
+              headers: {'User-Agent': AppConfig.userAgent},
+            )
             .timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
