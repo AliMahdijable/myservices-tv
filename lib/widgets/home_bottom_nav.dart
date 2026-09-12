@@ -8,12 +8,14 @@ class HomeBottomNav extends StatelessWidget {
   final bool searchEnabled;
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
+  final VoidCallback onMatchesTap;
 
   const HomeBottomNav({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
+    required this.onMatchesTap,
   });
 
   @override
@@ -48,6 +50,13 @@ class HomeBottomNav extends StatelessWidget {
                   icon: Icons.search_rounded,
                   label: 'بحث',
                   onTap: searchEnabled ? onSearchTap : null,
+                ),
+              ),
+              Expanded(
+                child: _BottomNavItem(
+                  icon: Icons.sports_soccer,
+                  label: 'المباريات',
+                  onTap: onMatchesTap,
                 ),
               ),
               Expanded(

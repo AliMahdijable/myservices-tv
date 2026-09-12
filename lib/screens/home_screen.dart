@@ -16,6 +16,7 @@ import '../widgets/home_bottom_nav.dart';
 import 'player_screen.dart';
 import 'setup_screen.dart';
 import 'search_screen.dart';
+import 'matches_screen.dart';
 import '../services/favorites_service.dart';
 import '../services/recently_watched_service.dart';
 
@@ -157,6 +158,17 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const SetupScreen(),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 200),
+      ),
+    );
+  }
+
+  void _openMatches() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const MatchesScreen(),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
         transitionDuration: const Duration(milliseconds: 200),
@@ -338,6 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         searchEnabled: _categories.isNotEmpty,
                         onSearchTap: _openSearch,
                         onSettingsTap: _openSettings,
+                        onMatchesTap: _openMatches,
                       ),
                     ],
                   )
@@ -350,6 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 searchEnabled: _categories.isNotEmpty,
                 onSearchTap: _openSearch,
                 onSettingsTap: _openSettings,
+                onMatchesTap: _openMatches,
               ),
       ),
     );

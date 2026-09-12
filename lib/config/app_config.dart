@@ -160,4 +160,10 @@ class AppConfig {
   // Sent on every HTTP request (playlist/category discovery and playback
   // alike) — some IPTV providers reject requests with no User-Agent at all.
   static const String userAgent = 'Mozilla/5.0 IPTV Player';
+
+  // ── API-Football (jدول المباريات + الترتيب) ─────────────────────────────
+  // Pro-tier key (7500 req/day) — schedule, live scores and standings only;
+  // unrelated to the Xtream/M3U credentials above.
+  static const String footballApiKey = '2a187f29f66ceb13a0183508b155b007';
+  static const String footballApiBase = 'https://v3.football.api-sports.io';
 }

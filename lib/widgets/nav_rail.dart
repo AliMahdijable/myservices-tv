@@ -9,12 +9,14 @@ class NavRail extends StatelessWidget {
   final bool searchEnabled;
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
+  final VoidCallback onMatchesTap;
 
   const NavRail({
     super.key,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
+    required this.onMatchesTap,
   });
 
   @override
@@ -36,6 +38,12 @@ class NavRail extends StatelessWidget {
             icon: Icons.search_rounded,
             label: 'بحث',
             onTap: searchEnabled ? onSearchTap : null,
+          ),
+          const SizedBox(height: 18),
+          _RailItem(
+            icon: Icons.sports_soccer,
+            label: 'المباريات',
+            onTap: onMatchesTap,
           ),
           const Spacer(),
           _RailItem(
