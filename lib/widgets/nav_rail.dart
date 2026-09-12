@@ -1,22 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
+import 'home_destination.dart';
 
 /// Side navigation rail for wide (tablet/TV) screens. Replaces the search
 /// and settings icon buttons that used to sit in the home app bar, freeing
 /// that bar down to just the logo/tagline/refresh.
 class NavRail extends StatelessWidget {
+  /// Which page the shell is showing — see [HomeBottomNav.active].
+  final HomeDestination active;
+
   final bool searchEnabled;
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
   final VoidCallback onMatchesTap;
 
+  /// Returns to the home page from another destination.
+  final VoidCallback? onHomeTap;
+
   const NavRail({
     super.key,
+    this.active = HomeDestination.home,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
     required this.onMatchesTap,
+    this.onHomeTap,
   });
 
   @override
@@ -32,20 +41,26 @@ class NavRail extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _RailItem(icon: Icons.home_rounded, label: 'الرئيسية', active: true),
+          _RailItem(
+            icon: Icons.home_rounded,
+            label: 'الرئيسية',
+            active: active == HomeDestination.home,
+            onTap: onHomeTap,
+          ),
           const SizedBox(height: 18),
           _RailItem(
             icon: Icons.search_rounded,
             label: 'بحث',
             onTap: searchEnabled ? onSearchTap : null,
           ),
-          const SizedBox(height: 18),
+          const Spacer(),
           _RailItem(
-            icon: Icons.sports_soccer,
+            icon: Icons.sports_soccer_rounded,
             label: 'المباريات',
+            active: active == HomeDestination.matches,
             onTap: onMatchesTap,
           ),
-          const Spacer(),
+          const SizedBox(height: 18),
           _RailItem(
             icon: Icons.settings_rounded,
             label: 'الإعدادات',

@@ -11,7 +11,14 @@ import '../widgets/match_card.dart';
 import '../widgets/standings_table.dart';
 
 class MatchesScreen extends StatefulWidget {
-  const MatchesScreen({super.key});
+  /// True when this is a page of the home shell rather than its own route.
+  /// The shell paints the background for every destination and already
+  /// provides a way back via its own nav bar, so an embedded instance skips
+  /// both the gradient (avoiding a second, darker layer over the shell's)
+  /// and the back button.
+  final bool embedded;
+
+  const MatchesScreen({super.key, this.embedded = false});
 
   @override
   State<MatchesScreen> createState() => _MatchesScreenState();
@@ -35,39 +42,55 @@ class _MatchesScreenState extends State<MatchesScreen>
 
   @override
   Widget build(BuildContext context) {
+    final body = SafeArea(
+      bottom: !widget.embedded,
+      child: Column(
+        children: [
+          _buildHeader(),
+          _buildTabBar(),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: const [_ScheduleTab(), _StandingsTab()],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (widget.embedded) return body;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: AppColors.backgroundGradient),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(),
-              _buildTabBar(),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: const [_ScheduleTab(), _StandingsTab()],
-                ),
-              ),
-            ],
-          ),
-        ),
+        child: body,
       ),
     );
   }
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
       child: Row(
         children: [
-          FocusableIconButton(
-            icon: Icons.arrow_forward_rounded,
-            semanticLabel: 'رجوع',
-            autofocus: true,
-            onTap: () => Navigator.of(context).maybePop(),
-          ),
-          const SizedBox(width: 12),
+          if (!widget.embedded) ...[
+            FocusableIconButton(
+              icon: Icons.arrow_forward_rounded,
+              semanticLabel: 'رجوع',
+              autofocus: true,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+            const SizedBox(width: 12),
+          ] else ...[
+            Container(
+              width: 4,
+              height: 22,
+              decoration: BoxDecoration(
+                gradient: AppColors.redGradient,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
           Text(
             'المباريات',
             style: AppFonts.cairo(

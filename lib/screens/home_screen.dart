@@ -11,12 +11,13 @@ import '../utils/channel_identity.dart';
 import '../theme/layout_metrics.dart';
 import '../widgets/category_section.dart';
 import '../widgets/focusable_icon_button.dart';
+import '../widgets/home_destination.dart';
 import '../widgets/nav_rail.dart';
 import '../widgets/home_bottom_nav.dart';
 import 'player_screen.dart';
+import 'matches_screen.dart';
 import 'setup_screen.dart';
 import 'search_screen.dart';
-import 'matches_screen.dart';
 import '../services/favorites_service.dart';
 import '../services/recently_watched_service.dart';
 
@@ -46,6 +47,22 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the user can see where they left off.
   String? _playingKey;
 
+  /// The destination the shell is showing.
+  HomeDestination _destination = HomeDestination.home;
+
+  /// Drives the swipe between destinations. A horizontal drag on the page
+  /// background moves between them; a drag that starts on a channel rail or
+  /// the day strip belongs to that rail, and the gesture arena gives it to the
+  /// inner scrollable, which is what the user means by dragging a row.
+  ///
+  /// The app sets no [Directionality], so it lays out left-to-right and Arabic
+  /// is right-aligned only by the strength of its own characters. Page 0 is
+  /// therefore on the left, matching the bar's leftmost item, and dragging
+  /// leftwards advances along the bar. Wrapping this screen in an RTL
+  /// [Directionality] would mirror both, which is why the tests pump it the
+  /// same way the app does rather than forcing a direction.
+  final PageController _shellController = PageController();
+
   int get _totalChannels =>
       _categories.fold(0, (sum, cat) => sum + cat.channels.length);
 
@@ -62,8 +79,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _goTo(HomeDestination destination) {
+    if (_destination == destination) return;
+    setState(() => _destination = destination);
+    if (_shellController.hasClients) {
+      _shellController.animateToPage(
+        destination.index,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   @override
   void dispose() {
+    _shellController.dispose();
     _homeScrollController.dispose();
     super.dispose();
   }
@@ -158,17 +188,6 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const SetupScreen(),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
-  }
-
-  void _openMatches() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const MatchesScreen(),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
         transitionDuration: const Duration(milliseconds: 200),
@@ -328,10 +347,35 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
 
+    // Each destination keeps its own insets: the home page wants the 16dp
+    // gutter its rails are drawn against, the matches page sets its own.
+    final homePage = SafeArea(
+      minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      bottom: isWide,
+      child: content,
+    );
+
+    final shell = PageView(
+      controller: _shellController,
+      onPageChanged: (index) {
+        final destination = HomeDestination.values[index];
+        if (_destination != destination) {
+          setState(() => _destination = destination);
+        }
+      },
+      children: [homePage, const MatchesScreen(embedded: true)],
+    );
+
     return PopScope(
+      // Back returns to the home page before it offers to leave the app —
+      // otherwise the matches section would exit the app from a subpage.
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        if (_destination != HomeDestination.home) {
+          _goTo(HomeDestination.home);
+          return;
+        }
         _handleBackOnHome();
       },
       child: Scaffold(
@@ -339,31 +383,34 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: const BoxDecoration(
             gradient: AppColors.backgroundGradient,
           ),
-          child: SafeArea(
-            minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            bottom: isWide,
-            child: isWide
-                ? Row(
-                    children: [
-                      Expanded(child: content),
-                      NavRail(
+          child: isWide
+              ? Row(
+                  children: [
+                    Expanded(child: shell),
+                    SafeArea(
+                      minimum: const EdgeInsets.symmetric(vertical: 8),
+                      child: NavRail(
+                        active: _destination,
+                        onHomeTap: () => _goTo(HomeDestination.home),
+                        onMatchesTap: () => _goTo(HomeDestination.matches),
                         searchEnabled: _categories.isNotEmpty,
                         onSearchTap: _openSearch,
                         onSettingsTap: _openSettings,
-                        onMatchesTap: _openMatches,
                       ),
-                    ],
-                  )
-                : content,
-          ),
+                    ),
+                  ],
+                )
+              : shell,
         ),
         bottomNavigationBar: isWide
             ? null
             : HomeBottomNav(
+                active: _destination,
+                onHomeTap: () => _goTo(HomeDestination.home),
+                onMatchesTap: () => _goTo(HomeDestination.matches),
                 searchEnabled: _categories.isNotEmpty,
                 onSearchTap: _openSearch,
                 onSettingsTap: _openSettings,
-                onMatchesTap: _openMatches,
               ),
       ),
     );

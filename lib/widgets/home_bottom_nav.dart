@@ -1,21 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
+import 'home_destination.dart';
 
 /// Bottom navigation bar for narrow (phone) screens — the mobile-native
 /// equivalent of [NavRail], which doesn't fit a narrow viewport.
 class HomeBottomNav extends StatelessWidget {
+  /// Which page the shell is showing, so the bar marks the right destination
+  /// instead of always claiming to be on the home page.
+  final HomeDestination active;
+
   final bool searchEnabled;
   final VoidCallback onSearchTap;
   final VoidCallback onSettingsTap;
   final VoidCallback onMatchesTap;
 
+  /// Returns to the home page from another destination.
+  final VoidCallback? onHomeTap;
+
   const HomeBottomNav({
     super.key,
+    this.active = HomeDestination.home,
     required this.searchEnabled,
     required this.onSearchTap,
     required this.onSettingsTap,
     required this.onMatchesTap,
+    this.onHomeTap,
   });
 
   @override
@@ -30,7 +40,7 @@ class HomeBottomNav extends StatelessWidget {
             top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
           ),
         ),
-        // The bar is a fixed 62dp tall and its three items share one row, so
+        // The bar is a fixed 62dp tall and its items share one row, so
         // neither axis can grow to absorb a large system text scale. Clamp the
         // scale and let each item flex, rather than letting an accessibility
         // setting paint an overflow stripe across the navigation.
@@ -42,7 +52,8 @@ class HomeBottomNav extends StatelessWidget {
                 child: _BottomNavItem(
                   icon: Icons.home_rounded,
                   label: 'الرئيسية',
-                  active: true,
+                  active: active == HomeDestination.home,
+                  onTap: onHomeTap,
                 ),
               ),
               Expanded(
@@ -52,10 +63,13 @@ class HomeBottomNav extends StatelessWidget {
                   onTap: searchEnabled ? onSearchTap : null,
                 ),
               ),
+              // Same position as in [NavRail], so a user who moves between a
+              // phone and the TV finds the section in the same place.
               Expanded(
                 child: _BottomNavItem(
-                  icon: Icons.sports_soccer,
+                  icon: Icons.sports_soccer_rounded,
                   label: 'المباريات',
+                  active: active == HomeDestination.matches,
                   onTap: onMatchesTap,
                 ),
               ),

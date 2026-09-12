@@ -55,7 +55,17 @@ class Fixture {
     this.venueName,
   });
 
-  static const _liveCodes = {'1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'SUSP', 'INT'};
+  static const _liveCodes = {
+    '1H',
+    '2H',
+    'HT',
+    'ET',
+    'BT',
+    'P',
+    'LIVE',
+    'SUSP',
+    'INT',
+  };
   static const _finishedCodes = {'FT', 'AET', 'PEN'};
   static const _abnormalCodes = {'PST', 'CANC', 'ABD', 'AWD', 'WO'};
 
@@ -78,8 +88,7 @@ class Fixture {
     return Fixture(
       id: fixtureJson['id'] as int? ?? 0,
       kickoff:
-          DateTime.tryParse(fixtureJson['date']?.toString() ?? '')
-              ?.toLocal() ??
+          DateTime.tryParse(fixtureJson['date']?.toString() ?? '')?.toLocal() ??
           DateTime.now(),
       statusShort: statusJson['short']?.toString() ?? 'NS',
       elapsedMinutes: statusJson['elapsed'] as int?,
