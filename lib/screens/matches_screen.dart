@@ -161,7 +161,7 @@ class _ScheduleTab extends StatefulWidget {
 class _ScheduleTabState extends State<_ScheduleTab> {
   late DateTime _selectedDate;
   int? _selectedCompetitionId; // null = all
-  late Future<List<Fixture>> _future;
+  late Future<FixturesResult> _future;
 
   @override
   void initState() {
@@ -171,7 +171,7 @@ class _ScheduleTabState extends State<_ScheduleTab> {
     _future = _load();
   }
 
-  Future<List<Fixture>> _load({bool forceRefresh = false}) {
+  Future<FixturesResult> _load({bool forceRefresh = false}) {
     return _selectedCompetitionId == null
         ? FootballApiService.fixturesForDate(
             _selectedDate,
@@ -226,7 +226,7 @@ class _ScheduleTabState extends State<_ScheduleTab> {
               setState(() => _future = result);
               await result;
             },
-            child: FutureBuilder<List<Fixture>>(
+            child: FutureBuilder<FixturesResult>(
               future: _future,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -236,19 +236,110 @@ class _ScheduleTabState extends State<_ScheduleTab> {
                     ),
                   );
                 }
-                final fixtures = snapshot.data ?? const [];
-                if (fixtures.isEmpty) {
+                final result =
+                    snapshot.data ??
+                    const FixturesResult([], failedLeagueIds: [-1]);
+
+                // Nothing came back and something went wrong: saying "no
+                // matches today" here is a confident lie, and the user has no
+                // way to tell it from a real quiet Tuesday.
+                if (result.fixtures.isEmpty) {
                   return _EmptyState(
-                    message: 'لا توجد مباريات في هذا اليوم',
+                    message: result.hasFailures
+                        ? 'تعذّر تحميل المباريات — تحقّق من الاتصال'
+                        : 'لا توجد مباريات في هذا اليوم',
                     onRetry: () => _reload(forceRefresh: true),
                   );
                 }
-                return _FixturesList(fixtures: fixtures);
+
+                // Some leagues answered and some did not. Showing the ones
+                // that did, silently, would tell the user their league has no
+                // match today when nobody actually asked.
+                return Column(
+                  children: [
+                    if (result.hasFailures)
+                      _PartialFailureBanner(
+                        leagueIds: result.failedLeagueIds,
+                        onRetry: () => _reload(forceRefresh: true),
+                      ),
+                    Expanded(child: _FixturesList(fixtures: result.fixtures)),
+                  ],
+                );
               },
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Says which competitions are missing from the list below it, so a partial
+/// answer is never mistaken for a complete one.
+class _PartialFailureBanner extends StatelessWidget {
+  final List<int> leagueIds;
+  final VoidCallback onRetry;
+
+  const _PartialFailureBanner({required this.leagueIds, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final names = leagueIds
+        .map((id) => Competition.find(id)?.shortName)
+        .whereType<String>()
+        .toList();
+    final what = names.isEmpty
+        ? 'بعض الدوريات'
+        : names.length <= 3
+        ? names.join('، ')
+        : '${names.take(3).join('، ')} و${names.length - 3} غيرها';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.accentRed.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.accentRed.withValues(alpha: 0.35)),
+      ),
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.3,
+        child: Row(
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              size: 16,
+              color: AppColors.accentRedLight,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'تعذّر تحميل $what',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textDirection: TextDirection.rtl,
+                style: AppFonts.cairo(
+                  color: AppColors.textSecondary,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: onRetry,
+              child: Text(
+                'إعادة',
+                style: AppFonts.cairo(
+                  color: AppColors.accentRedLight,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
