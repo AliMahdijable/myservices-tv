@@ -60,3 +60,9 @@ app.*.map.json
 /*.jpg
 index.html
 android/.kotlin/
+
+# Firebase iOS config. Kept out of the repository by default — it carries the
+# project's iOS API key, and this remote is publicly readable. Re-download it
+# from the Firebase console for com.myservices.myservicesTv when setting up a
+# new machine; without it the app still builds and runs, it simply has no push.
+ios/Runner/GoogleService-Info.plist
