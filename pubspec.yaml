@@ -22,6 +22,14 @@ dependencies:
   google_fonts: ^6.2.1
   connectivity_plus: ^7.3.1
 
+  # Push notifications. The Android side was wired natively first, which is
+  # enough for a Firebase Console campaign but cannot ask for a token, handle
+  # a tap, or request the Android 13 runtime permission — and iOS shows
+  # nothing at all until the app asks the user. These give both platforms one
+  # implementation instead of two.
+  firebase_core: ^4.1.1
+  firebase_messaging: ^16.0.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

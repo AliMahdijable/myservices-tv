@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'player/playback_preferences.dart';
+import 'services/push_notifications.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
 import 'utils/device_type.dart';
@@ -18,6 +21,11 @@ void main() async {
   // TvKeyboard read this synchronously at build time, so it must resolve
   // before the first frame.
   await DeviceType.preload();
+
+  // Not awaited: registering with APNs or FCM needs the network, and on a cold
+  // start with no signal it would hold the first frame behind a timeout. The
+  // permission dialog can appear a moment after the app is already usable.
+  unawaited(PushNotifications.instance.start());
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

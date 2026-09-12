@@ -73,6 +73,9 @@ flutter {
 dependencies {
     // BoM pins every Firebase library below to a mutually compatible set —
     // individual Firebase artifacts must not declare their own version.
+    // The firebase_messaging Flutter plugin brings its own firebase-messaging
+    // at a version it is tested against. Pinning a second one here through the
+    // BOM invites a silent version skew between the Dart and native halves, so
+    // only the BOM stays, to keep any other Firebase library we add in step.
     implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
-    implementation("com.google.firebase:firebase-messaging")
 }
