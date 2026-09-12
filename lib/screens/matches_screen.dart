@@ -91,12 +91,19 @@ class _MatchesScreenState extends State<MatchesScreen>
             ),
             const SizedBox(width: 12),
           ],
-          Text(
-            'المباريات',
-            style: AppFonts.cairo(
-              color: AppColors.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
+          // The back button and the accent bar are fixed widths, so the title
+          // is the only child that can give way — without this the row
+          // overflowed by 88dp at text scale 2 and 268dp at 3.
+          Expanded(
+            child: Text(
+              'المباريات',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppFonts.cairo(
+                color: AppColors.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -112,25 +119,31 @@ class _MatchesScreenState extends State<MatchesScreen>
         color: Colors.white.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          gradient: AppColors.redGradient,
-          borderRadius: BorderRadius.circular(11),
+      // A TabBar sizes itself to a fixed height, so its labels clip instead of
+      // overflowing — at 3x 'الترتيب' was handed 46dp for a line needing 60
+      // and lost its lower half without raising anything.
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.3,
+        child: TabBar(
+          controller: _tabController,
+          indicator: BoxDecoration(
+            gradient: AppColors.redGradient,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          indicatorSize: TabBarIndicatorSize.tab,
+          dividerColor: Colors.transparent,
+          labelColor: Colors.white,
+          unselectedLabelColor: AppColors.textMuted,
+          labelStyle: AppFonts.cairo(fontSize: 14, fontWeight: FontWeight.w800),
+          unselectedLabelStyle: AppFonts.cairo(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          tabs: const [
+            Tab(text: 'الجدول'),
+            Tab(text: 'الترتيب'),
+          ],
         ),
-        indicatorSize: TabBarIndicatorSize.tab,
-        dividerColor: Colors.transparent,
-        labelColor: Colors.white,
-        unselectedLabelColor: AppColors.textMuted,
-        labelStyle: AppFonts.cairo(fontSize: 14, fontWeight: FontWeight.w800),
-        unselectedLabelStyle: AppFonts.cairo(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-        tabs: const [
-          Tab(text: 'الجدول'),
-          Tab(text: 'الترتيب'),
-        ],
       ),
     );
   }
@@ -296,7 +309,9 @@ class _LeagueHeader extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              fixture.leagueName,
+              // The API names its leagues in English; the app already carries
+              // an Arabic name for every competition it asks about.
+              Competition.nameFor(fixture.leagueId, fixture.leagueName),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textDirection: TextDirection.rtl,
@@ -307,16 +322,42 @@ class _LeagueHeader extends StatelessWidget {
               ),
             ),
           ),
-          if (fixture.round.isNotEmpty)
+          if (fixture.round.isNotEmpty) ...[
+            // The name sits in an Expanded that eats the whole row, so without
+            // a gap the round text sat flush against it and the two read as
+            // one run-on word: "La LigaRegular Season - 5".
+            const SizedBox(width: 10),
             Text(
-              fixture.round,
+              _roundLabel(fixture.round),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: AppFonts.cairo(color: AppColors.textMuted, fontSize: 11),
             ),
+          ],
         ],
       ),
     );
+  }
+
+  /// API-Football writes the round in English — "Regular Season - 5",
+  /// "Round of 16". Numbered rounds are the overwhelming majority, so they are
+  /// matched by shape rather than by listing every competition's wording.
+  static String _roundLabel(String raw) {
+    final numbered = RegExp(r'-\s*(\d+)\s*$').firstMatch(raw);
+    if (numbered != null) return 'الجولة ${numbered.group(1)}';
+
+    const knockout = <String, String>{
+      'Group Stage': 'دور المجموعات',
+      'Round of 16': 'دور الـ16',
+      'Quarter-finals': 'ربع النهائي',
+      'Semi-finals': 'نصف النهائي',
+      'Final': 'النهائي',
+      '3rd Place Final': 'تحديد المركز الثالث',
+      'Preliminary Round': 'الدور التمهيدي',
+    };
+    // Anything unrecognised is shown as the API sent it: an English round is
+    // less confusing than a wrong Arabic one.
+    return knockout[raw.trim()] ?? raw;
   }
 }
 
@@ -326,7 +367,15 @@ class _DateStrip extends StatelessWidget {
 
   const _DateStrip({required this.selected, required this.onSelect});
 
-  static const _weekdays = ['اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت', 'أحد'];
+  static const _weekdays = [
+    'اثنين',
+    'ثلاثاء',
+    'أربعاء',
+    'خميس',
+    'جمعة',
+    'سبت',
+    'أحد',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -334,53 +383,77 @@ class _DateStrip extends StatelessWidget {
     final base = DateTime(today.year, today.month, today.day);
     final days = List.generate(7, (i) => base.add(Duration(days: i - 1)));
 
-    return SizedBox(
-      height: 64,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: days.length,
-        itemBuilder: (context, index) {
-          final date = days[index];
-          final isSelected = date == selected;
-          final isToday = date == base;
-          final label = isToday
-              ? 'اليوم'
-              : date == base.add(const Duration(days: 1))
-              ? 'غداً'
-              : _weekdays[date.weekday - 1];
+    // Two lines of text in a fixed box cannot absorb a larger system font on
+    // their own: the height has to follow the text, and the text has to stop
+    // growing somewhere or no height would ever be enough.
+    final scaler = MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3);
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: _SelectableChip(
-              selected: isSelected,
-              onTap: () => onSelect(date),
-              width: 58,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    label,
-                    style: AppFonts.cairo(
-                      color: isSelected ? Colors.white : AppColors.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: SizedBox(
+        height: scaler.scale(52),
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          itemCount: days.length,
+          itemBuilder: (context, index) {
+            final date = days[index];
+            final isSelected = date == selected;
+            final isToday = date == base;
+            final label = isToday
+                ? 'اليوم'
+                : date == base.add(const Duration(days: 1))
+                ? 'غداً'
+                : _weekdays[date.weekday - 1];
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _SelectableChip(
+                selected: isSelected,
+                onTap: () => onSelect(date),
+                minWidth: 46,
+                // A date reads as a card, not as a button: square enough to sit
+                // in a row of dates, and tight enough that a week of them fits a
+                // phone without the strip dominating the screen.
+                radius: 10,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      style: AppFonts.cairo(
+                        color: isSelected
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : AppColors.textMuted,
+                        fontSize: 9.5,
+                        height: 1.1,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${date.day}',
-                    style: AppFonts.cairo(
-                      color: isSelected ? Colors.white : AppColors.textSecondary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                    const SizedBox(height: 1),
+                    Text(
+                      '${date.day}',
+                      maxLines: 1,
+                      style: AppFonts.cairo(
+                        color: isSelected
+                            ? Colors.white
+                            : AppColors.textPrimary,
+                        fontSize: 14,
+                        height: 1.15,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -400,45 +473,57 @@ class _CompetitionStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = Competition.all;
-    return SizedBox(
-      height: 34,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        children: [
-          if (showAllOption)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: _SelectableChip(
-                selected: selectedId == null,
-                onTap: () => onSelect(null),
-                child: Text(
-                  'الكل',
-                  style: AppFonts.cairo(
-                    color: selectedId == null ? Colors.white : AppColors.textMuted,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
+    // A Text that does not fit its box clips silently instead of reporting an
+    // overflow, so at a larger font the league names lost their lower half
+    // with nothing in the logs.
+    final scaler = MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3);
+
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: SizedBox(
+        height: scaler.scale(34),
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          children: [
+            if (showAllOption)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _SelectableChip(
+                  selected: selectedId == null,
+                  onTap: () => onSelect(null),
+                  child: Text(
+                    'الكل',
+                    style: AppFonts.cairo(
+                      color: selectedId == null
+                          ? Colors.white
+                          : AppColors.textMuted,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
-          for (final c in items)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: _SelectableChip(
-                selected: selectedId == c.id,
-                onTap: () => onSelect(c.id),
-                child: Text(
-                  c.shortName,
-                  style: AppFonts.cairo(
-                    color: selectedId == c.id ? Colors.white : AppColors.textMuted,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
+            for (final c in items)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _SelectableChip(
+                  selected: selectedId == c.id,
+                  onTap: () => onSelect(c.id),
+                  child: Text(
+                    c.shortName,
+                    style: AppFonts.cairo(
+                      color: selectedId == c.id
+                          ? Colors.white
+                          : AppColors.textMuted,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -450,13 +535,25 @@ class _SelectableChip extends StatefulWidget {
   final bool selected;
   final VoidCallback onTap;
   final Widget child;
-  final double? width;
+
+  /// A floor, not a fixed size. Pinning the width to 58 left the label 28dp
+  /// between the padding and the border — narrower than 'جمعة' at the default
+  /// text size, so the word wrapped and burst the strip's fixed height.
+  final double? minWidth;
+
+  /// Fully round suits a one-word filter pill. A date chip stacks two lines
+  /// and reads as a card; that tall, a lozenge looks like a stretched button.
+  final double radius;
+
+  final EdgeInsets padding;
 
   const _SelectableChip({
     required this.selected,
     required this.onTap,
     required this.child,
-    this.width,
+    this.minWidth,
+    this.radius = 999,
+    this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
   });
 
   @override
@@ -486,12 +583,14 @@ class _SelectableChipState extends State<_SelectableChip> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          width: widget.width,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          constraints: BoxConstraints(minWidth: widget.minWidth ?? 0),
+          padding: widget.padding,
           decoration: BoxDecoration(
             gradient: widget.selected ? AppColors.redGradient : null,
-            color: widget.selected ? null : Colors.white.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(999),
+            color: widget.selected
+                ? null
+                : Colors.white.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(widget.radius),
             border: Border.all(
               color: _isFocused
                   ? AppColors.accentRedLight

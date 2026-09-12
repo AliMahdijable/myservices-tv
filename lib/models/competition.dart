@@ -20,16 +20,38 @@ class Competition {
       date.month >= 7 ? date.year : date.year - 1;
 
   static const List<Competition> all = [
-    Competition(id: 307, name: 'الدوري السعودي للمحترفين', shortName: 'السعودي'),
+    Competition(
+      id: 307,
+      name: 'الدوري السعودي للمحترفين',
+      shortName: 'السعودي',
+    ),
     Competition(id: 2, name: 'دوري أبطال أوروبا', shortName: 'أبطال أوروبا'),
     Competition(id: 3, name: 'الدوري الأوروبي', shortName: 'الأوروبي'),
-    Competition(id: 39, name: 'الدوري الإنجليزي الممتاز', shortName: 'الإنجليزي'),
+    Competition(
+      id: 39,
+      name: 'الدوري الإنجليزي الممتاز',
+      shortName: 'الإنجليزي',
+    ),
     Competition(id: 140, name: 'الدوري الإسباني', shortName: 'الإسباني'),
     Competition(id: 135, name: 'الدوري الإيطالي', shortName: 'الإيطالي'),
     Competition(id: 78, name: 'الدوري الألماني', shortName: 'الألماني'),
     Competition(id: 61, name: 'الدوري الفرنسي', shortName: 'الفرنسي'),
   ];
 
-  static Competition byId(int id) =>
-      all.firstWhere((c) => c.id == id, orElse: () => all.first);
+  /// The curated entry for [id], or null when the API returns a competition
+  /// this app does not list.
+  ///
+  /// Deliberately nullable. The previous lookup fell back to `all.first`, so
+  /// an unrecognised id would have been labelled الدوري السعودي — a wrong
+  /// answer is worse here than no answer, because the caller can fall back to
+  /// the name the API itself sent.
+  static Competition? find(int id) {
+    for (final competition in all) {
+      if (competition.id == id) return competition;
+    }
+    return null;
+  }
+
+  /// The Arabic name for [id], falling back to whatever the API called it.
+  static String nameFor(int id, String fallback) => find(id)?.name ?? fallback;
 }

@@ -67,9 +67,7 @@ class _TeamLabel extends StatelessWidget {
         textAlign: logoFirst ? TextAlign.start : TextAlign.end,
         style: AppFonts.cairo(
           fontSize: 12.5,
-          fontWeight: team.winner == true
-              ? FontWeight.w800
-              : FontWeight.w600,
+          fontWeight: team.winner == true ? FontWeight.w800 : FontWeight.w600,
           color: team.winner == false
               ? AppColors.textMuted
               : AppColors.textPrimary,
@@ -157,22 +155,36 @@ class _CenterStatus extends StatelessWidget {
             ),
             const SizedBox(height: 4),
           ],
+          // This column is a fixed 74dp between the two team names, and
+          // '10:00 مساءً' is wider than that — it was wrapping onto a second
+          // line, which pushed the card taller than its neighbours and read as
+          // a broken time. Shrinking to fit keeps it one line and one row.
           if (hasScore)
-            Text(
-              '${fixture.homeGoals ?? 0} - ${fixture.awayGoals ?? 0}',
-              style: AppFonts.cairo(
-                color: AppColors.textPrimary,
-                fontSize: 19,
-                fontWeight: FontWeight.w800,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '${fixture.homeGoals ?? 0} - ${fixture.awayGoals ?? 0}',
+                maxLines: 1,
+                softWrap: false,
+                style: AppFonts.cairo(
+                  color: AppColors.textPrimary,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             )
           else if (phase == FixturePhase.upcoming)
-            Text(
-              _formatTime(fixture.kickoff),
-              style: AppFonts.cairo(
-                color: AppColors.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                _formatTime(fixture.kickoff),
+                maxLines: 1,
+                softWrap: false,
+                style: AppFonts.cairo(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             )
           else
@@ -198,10 +210,16 @@ class _CenterStatus extends StatelessWidget {
     );
   }
 
+  /// 24-hour time reads as a number rather than a time in an Arabic
+  /// interface, and the API hands kickoff over in UTC — so this is both the
+  /// conversion to the phone's own clock and to the way the hour is said.
   static String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+    final local = dt.toLocal();
+    final suffix = local.hour < 12 ? 'صباحاً' : 'مساءً';
+    var hour = local.hour % 12;
+    if (hour == 0) hour = 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute $suffix';
   }
 
   static String _statusLabel(FixturePhase phase, String code) {
