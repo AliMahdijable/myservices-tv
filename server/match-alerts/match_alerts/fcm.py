@@ -171,7 +171,13 @@ class FcmClient:
             "notification": {"title": title, "body": body},
             "data": {k: str(v) for k, v in (data or {}).items()},
             "apns": {
-                "payload": {"aps": {"sound": "default"}},
+                # An explicit APNs payload must carry the visible content too.
+                # Do not rely on FCM merging the platform-neutral notification
+                # into a sound-only aps dictionary.
+                "payload": {"aps": {
+                    "alert": {"title": title, "body": body},
+                    "sound": "default",
+                }},
                 "headers": {
                     # Keep a short delivery window for a temporarily offline
                     # phone. Zero forbids APNs from storing/retrying at all.

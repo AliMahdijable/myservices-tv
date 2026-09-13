@@ -19,8 +19,10 @@ def test_apns_can_retry_briefly_without_keeping_stale_notifications(
         return SendResult(True, "ok")
 
     monkeypatch.setattr(client, "_post", capture)
+    title = "تذكير مباراة برشلونة"
+    body = "برشلونة × ليفانتي — تبدأ المباراة قريباً"
     client.send_alert(
-        condition="'m1_t15' in topics", title="test", body="test",
+        condition="'m1_t15' in topics", title=title, body=body,
         data={"fixtureId": "1", "type": kind}, validate_only=True,
     )
     message, validate_only = captured[0]
@@ -30,4 +32,10 @@ def test_apns_can_retry_briefly_without_keeping_stale_notifications(
     assert headers["apns-push-type"] == "alert"
     assert headers["apns-collapse-id"] == f"match-1-{kind}"
     assert message["android"]["ttl"] == f"{ttl}s"
+    # A sound-only APS payload can be accepted without a visible notification.
+    # Every event must carry the localized content in Apple's own alert field.
+    assert message["apns"]["payload"]["aps"]["alert"] == {
+        "title": title, "body": body,
+    }
+    assert message["apns"]["payload"]["aps"]["sound"] == "default"
     assert validate_only is True
