@@ -22,6 +22,7 @@ No credential, access token, or authorization header is ever logged.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -164,6 +165,7 @@ class FcmClient:
         data: dict[str, str] | None = None,
         validate_only: bool = False,
     ) -> SendResult:
+        ttl_seconds = 900 if (data or {}).get("type") == "ft" else 120
         message = {
             "condition": condition,
             "notification": {"title": title, "body": body},
@@ -171,14 +173,15 @@ class FcmClient:
             "apns": {
                 "payload": {"aps": {"sound": "default"}},
                 "headers": {
-                    # A match alert is worthless an hour late; letting APNs
-                    # drop it beats delivering it after the final whistle.
-                    "apns-expiration": "0",
+                    # Keep a short delivery window for a temporarily offline
+                    # phone. Zero forbids APNs from storing/retrying at all.
+                    # Match Android's bound so stale alerts still expire.
+                    "apns-expiration": str(int(time.time()) + ttl_seconds),
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
                 },
             },
-            "android": {"priority": "high", "ttl": (
-                "900s" if (data or {}).get("type") == "ft" else "120s"
-            )},
+            "android": {"priority": "high", "ttl": f"{ttl_seconds}s"},
         }
         if data and data.get("fixtureId") and data.get("type"):
             message["apns"]["headers"]["apns-collapse-id"] = (
