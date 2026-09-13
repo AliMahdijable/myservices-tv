@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,7 +7,9 @@ import '../models/competition.dart';
 import '../models/fixture.dart';
 import '../models/standing.dart';
 import '../services/football_api_service.dart';
+import '../services/match_alerts_service.dart';
 import '../theme/app_theme.dart';
+import 'alert_settings_screen.dart';
 import '../widgets/focusable_icon_button.dart';
 import '../widgets/match_card.dart';
 import '../widgets/standings_table.dart';
@@ -103,6 +107,17 @@ class _MatchesScreenState extends State<MatchesScreen>
                 color: AppColors.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          // One place that answers "what have I agreed to, and how do I stop
+          // it" — a feature that can wake a phone at night needs one.
+          FocusableIconButton(
+            icon: Icons.notifications_none_rounded,
+            semanticLabel: 'تنبيهات المباريات',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const AlertSettingsScreen(),
               ),
             ),
           ),
@@ -239,6 +254,15 @@ class _ScheduleTabState extends State<_ScheduleTab> {
                 final result =
                     snapshot.data ??
                     const FixturesResult([], failedLeagueIds: [-1]);
+
+                // A postponed match keeps its bell only if the stored kickoff
+                // follows the fixture; otherwise it expires against a time it
+                // no longer has.
+                if (result.fixtures.isNotEmpty) {
+                  unawaited(
+                    MatchAlertsService.instance.noteFixtures(result.fixtures),
+                  );
+                }
 
                 // Nothing came back and something went wrong: saying "no
                 // matches today" here is a confident lie, and the user has no

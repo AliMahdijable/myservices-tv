@@ -123,15 +123,22 @@ void main() {
         true,
       );
 
-      // Still wanted at the final whistle, and through extra time and
-      // penalties — the result alert has not been sent yet.
+      // Still wanted at the final whistle, through extra time and penalties,
+      // and past the delay before a worker notices — nothing on the device
+      // confirms a match actually finished, so the margin is deliberate. An
+      // extra subscription costs nothing; expiring an hour early costs the
+      // result alert the bell was set for.
       expect(
         alerts.desiredTopics(now: kickoff.add(const Duration(hours: 3))),
         isNotEmpty,
         reason: 'the result alert would be lost if this expired at full time',
       );
       expect(
-        alerts.desiredTopics(now: kickoff.add(const Duration(hours: 6))),
+        alerts.desiredTopics(now: kickoff.add(const Duration(hours: 7))),
+        isNotEmpty,
+      );
+      expect(
+        alerts.desiredTopics(now: kickoff.add(const Duration(hours: 9))),
         isEmpty,
       );
     });

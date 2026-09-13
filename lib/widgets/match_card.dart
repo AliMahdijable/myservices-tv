@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../models/fixture.dart';
 import '../theme/app_theme.dart';
+import 'club_follow_button.dart';
+import 'match_alert_bell.dart';
 
 /// One fixture row: two teams, a centered score/time/status column.
 ///
@@ -76,10 +78,27 @@ class _TeamLabel extends StatelessWidget {
       ),
     );
 
+    // Following is offered next to the club, because the moment you care
+    // about a club is the moment you are looking at it — and one star covers
+    // every match it will ever play, including the ones not scheduled yet.
+    final follow = ClubFollowButton(club: team);
+
     return Row(
       children: logoFirst
-          ? [logo, const SizedBox(width: 8), name]
-          : [name, const SizedBox(width: 8), logo],
+          ? [
+              logo,
+              const SizedBox(width: 6),
+              follow,
+              const SizedBox(width: 2),
+              name,
+            ]
+          : [
+              name,
+              const SizedBox(width: 2),
+              follow,
+              const SizedBox(width: 6),
+              logo,
+            ],
     );
   }
 }
@@ -205,6 +224,10 @@ class _CenterStatus extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+          // Under the status, in the column that is already about *when* this
+          // match is. A match that has been played has nothing left to
+          // announce, so the bell is not offered for one.
+          if (phase != FixturePhase.finished) MatchAlertBell(fixture: fixture),
         ],
       ),
     );
