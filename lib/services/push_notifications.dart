@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/widgets.dart';
 
 /// Push notifications, on whatever platform the app happens to be running.
@@ -28,6 +29,19 @@ class PushNotifications {
   static const Duration _retryDelay = Duration(seconds: 1);
   static const int _apnsAttempts = 8;
   static const int _tokenAttempts = 3;
+
+  /// A topic that exists so a test notification can be aimed at a development
+  /// device from the Firebase console.
+  ///
+  /// Proving push works normally means copying a registration token out of the
+  /// device — but a token is the credential that addresses one phone, and it
+  /// should not have to travel through a log, a clipboard and a console form
+  /// to answer the question "does this work". A topic answers it without ever
+  /// materialising one.
+  ///
+  /// Only debug builds subscribe, so a message sent here can never reach a
+  /// real user however it is addressed.
+  static const String debugTestTopic = 'debug-test-device';
 
   /// Retries registration when the app comes back to the foreground.
   ///
@@ -162,6 +176,15 @@ class PushNotifications {
     // that addresses this one device, so it is not something to leave lying
     // in a log that anything on the machine can read.
     debugPrint('push: registration token acquired (${_token!.length} chars)');
+
+    if (kDebugMode) {
+      try {
+        await messaging.subscribeToTopic(debugTestTopic);
+        debugPrint('push: subscribed to "$debugTestTopic" — test sends only');
+      } catch (error) {
+        debugPrint('push: could not subscribe to the test topic — $error');
+      }
+    }
 
     if (!_listening) {
       _listening = true;
