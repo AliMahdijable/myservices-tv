@@ -8,149 +8,150 @@ import 'package:flutter/widgets.dart';
 
 /// Push notifications, on whatever platform the app happens to be running.
 ///
-/// Android was wired natively first: the Firebase SDK there registers the
-/// device by itself, so a Console campaign already reached a backgrounded app
-/// without a line of Dart. iOS grants nothing by default — until the app asks
-/// the user and registers with APNs, a push is delivered to the device and
-/// silently dropped. That asking has to happen in code, so both platforms are
-/// driven from here rather than from two native files.
+/// Three things are kept deliberately separate, because conflating them is
+/// what makes push feel hostile or broken:
 ///
-/// Nothing here is allowed to stop the app starting. A missing
-/// `GoogleService-Info.plist`, a revoked APNs key, a device with no network on
-/// first launch — each of those throws, and none of them is a reason the user
-/// cannot watch television.
+///  * **Starting Firebase** is free and silent, and has to happen before
+///    anything else can be asked or undone.
+///  * **Registering** — permission, APNs, a token — is what a notification
+///    needs to arrive. It may prompt, so it happens when the user asks for an
+///    alert, never at launch.
+///  * **Restoring** is registering without prompting, for someone who already
+///    granted permission on a previous run. They should not be asked again.
+///
+/// Nothing here is allowed to stop the app starting, and nothing reports
+/// success it did not have.
 class PushNotifications {
   PushNotifications._();
 
   static final PushNotifications instance = PushNotifications._();
 
-  /// Poll gaps widen as attempt * this, so APNs gets roughly half a minute
-  /// before the attempt is abandoned and a later one takes over.
   static const Duration _retryDelay = Duration(seconds: 1);
   static const int _apnsAttempts = 8;
   static const int _tokenAttempts = 3;
 
-  /// A topic that exists so a test notification can be aimed at a development
-  /// device from the Firebase console.
-  ///
-  /// Proving push works normally means copying a registration token out of the
-  /// device — but a token is the credential that addresses one phone, and it
-  /// should not have to travel through a log, a clipboard and a console form
-  /// to answer the question "does this work". A topic answers it without ever
-  /// materialising one.
-  ///
-  /// Only debug builds subscribe, so a message sent here can never reach a
-  /// real user however it is addressed.
+  /// Debug builds join this so a test send can be aimed at a development
+  /// device without a registration token having to leave the phone.
   static const String debugTestTopic = 'debug-test-device';
 
-  /// Retries registration when the app comes back to the foreground.
-  ///
-  /// The first attempt on a cold start can legitimately come up empty — the
-  /// phone may be out of signal, or Apple may simply be slow to answer. Coming
-  /// back to the app is both the moment that is most likely to have changed
-  /// and the moment the user is present to answer a permission dialog, so it
-  /// is where a second attempt belongs. It stops asking once a token exists.
-  AppLifecycleListener? _lifecycle;
-
-  /// True only while an attempt is in flight, so two callers cannot register
-  /// twice. Deliberately NOT a "we already tried" latch: the first attempt on
-  /// a cold start often runs before the device has a network or before APNs
-  /// has answered, and a latch would turn that ordinary delay into an app that
-  /// never receives a notification until it is reinstalled.
+  bool _firebaseUp = false;
   bool _starting = false;
-
-  /// Set once the message handlers are attached, so a retry does not stack a
-  /// second set of listeners on the same streams.
   bool _listening = false;
-
   String? _token;
 
-  /// The FCM registration token, once one has been issued. Null until the user
-  /// has granted permission and APNs has answered.
-  String? get token => _token;
+  /// True once a registration token exists — the only state in which a
+  /// subscription can be made or removed.
+  bool get isRegistered => _token != null;
 
-  /// Messages that arrived while the app was in the foreground.
   final StreamController<RemoteMessage> _foreground =
       StreamController<RemoteMessage>.broadcast();
   Stream<RemoteMessage> get onMessage => _foreground.stream;
 
-  /// Messages whose notification the user tapped to open the app.
   final StreamController<RemoteMessage> _opened =
       StreamController<RemoteMessage>.broadcast();
   Stream<RemoteMessage> get onOpened => _opened.stream;
 
-  /// Brings up Firebase and registers for push.
+  /// Fires when FCM issues a new token. Subscriptions are tied to the token,
+  /// so everything the device wanted has to be asserted again.
+  final StreamController<void> _tokenChanged =
+      StreamController<void>.broadcast();
+  Stream<void> get onTokenChanged => _tokenChanged.stream;
+
+  AppLifecycleListener? _lifecycle;
+
+  // ── Firebase, on its own ───────────────────────────────────────────────
+
+  /// Brings Firebase up. Silent, and safe to call as often as you like.
+  Future<bool> ensureFirebase() async {
+    if (_firebaseUp) return true;
+    try {
+      await Firebase.initializeApp();
+      _firebaseUp = true;
+      return true;
+    } catch (error) {
+      // Almost always a missing platform config file — on iOS that is
+      // GoogleService-Info.plist. Retrying will not conjure one.
+      debugPrint('push: Firebase could not start — $error');
+      return false;
+    }
+  }
+
+  // ── Registration ───────────────────────────────────────────────────────
+
+  /// Registers for push. [mayPrompt] false means: only proceed if the user has
+  /// already granted permission, and never show the system dialog.
   ///
-  /// Returns false when push is simply unavailable — no Firebase config file
-  /// bundled for this platform, or the user declined. Callers ignore the
-  /// result; it exists so tests and diagnostics can tell the difference
-  /// between "declined" and "never asked".
-  Future<bool> start() async {
-    _lifecycle ??= AppLifecycleListener(
-      onResume: () {
-        if (_token == null && !_starting) unawaited(start());
-      },
-    );
+  /// Returns whether a registration token exists afterwards.
+  Future<bool> ensureRegistered({required bool mayPrompt}) async {
     if (_token != null) return true;
     if (_starting) return false;
     _starting = true;
     try {
-      return await _register();
+      return await _register(mayPrompt: mayPrompt);
     } finally {
       _starting = false;
     }
   }
 
-  Future<bool> _register() async {
-    try {
-      await Firebase.initializeApp();
-    } catch (error) {
-      // The commonest cause by far is that the platform's Firebase config file
-      // is not in the bundle — on iOS that is GoogleService-Info.plist, which
-      // has to be downloaded from the Firebase console for this bundle id.
-      // Nothing about that improves by retrying, so this one gives up.
-      debugPrint('push: Firebase could not start — $error');
-      return false;
-    }
+  /// Registration for a returning user: no dialog, no interruption.
+  ///
+  /// Called at launch so someone who followed a club last week has their
+  /// subscriptions re-asserted against a possibly new token without being
+  /// asked for anything.
+  Future<bool> restoreSilently() => ensureRegistered(mayPrompt: false);
+
+  Future<bool> _register({required bool mayPrompt}) async {
+    if (!await ensureFirebase()) return false;
+
+    _lifecycle ??= AppLifecycleListener(
+      onResume: () {
+        // Permission can be revoked in system settings while the app is away,
+        // and a token can be reissued. Both are only observable on return.
+        if (!_starting) unawaited(ensureRegistered(mayPrompt: false));
+      },
+    );
 
     final messaging = FirebaseMessaging.instance;
 
     try {
-      // On iOS this is the system dialog; on Android 13 and later it is the
-      // POST_NOTIFICATIONS runtime permission. On older Androids it resolves
-      // as granted without showing anything.
-      final settings = await messaging.requestPermission();
-      final granted =
-          settings.authorizationStatus == AuthorizationStatus.authorized ||
-          settings.authorizationStatus == AuthorizationStatus.provisional;
+      var settings = await messaging.getNotificationSettings();
+      var granted = _isGranted(settings.authorizationStatus);
+
+      if (!granted) {
+        if (!mayPrompt) {
+          // Not an error: nobody has asked for an alert yet, or permission was
+          // taken away. Either way the app says nothing.
+          return false;
+        }
+        settings = await messaging.requestPermission();
+        granted = _isGranted(settings.authorizationStatus);
+      }
+
       if (!granted) {
         debugPrint('push: permission ${settings.authorizationStatus.name}');
         return false;
       }
 
-      // Without this a foreground notification on iOS is delivered to the app
-      // and never drawn, which reads as "notifications do not work" while the
-      // backgrounded case works fine.
+      // Without this an iOS notification that arrives while the app is open is
+      // delivered and never drawn, which reads as "notifications are broken"
+      // even though the backgrounded case works.
       await messaging.setForegroundNotificationPresentationOptions(
         alert: true,
         badge: true,
         sound: true,
       );
     } catch (error) {
-      debugPrint('push: permission request failed — $error');
+      debugPrint('push: permission step failed — $error');
       return false;
     }
 
-    // Apple issues the device's APNs token asynchronously after registration,
-    // and FCM cannot mint its own token until it has one. Asking too early
-    // throws `apns-token-not-set`, which on a first launch is not a failure —
-    // it only means Apple has not answered yet.
+    // Apple issues the device token asynchronously, and FCM cannot mint its
+    // own until it has one. Asking too early throws `apns-token-not-set`,
+    // which on a first launch is not a failure — only an answer not yet given.
     if (Platform.isIOS || Platform.isMacOS) {
       final apns = await _awaitApnsToken(messaging);
       if (apns == null) {
-        debugPrint(
-          'push: APNs did not issue a token in time — will try again later',
-        );
+        debugPrint('push: APNs has not issued a token yet — will retry later');
         return false;
       }
       debugPrint('push: APNs token ready');
@@ -169,12 +170,11 @@ class PushNotifications {
     }
 
     if (_token == null) {
-      debugPrint('push: no registration token yet — will try again later');
+      debugPrint('push: no registration token yet — will retry later');
       return false;
     }
     // Status only, never the value: a registration token is the credential
-    // that addresses this one device, so it is not something to leave lying
-    // in a log that anything on the machine can read.
+    // that addresses this one device.
     debugPrint('push: registration token acquired (${_token!.length} chars)');
 
     if (kDebugMode) {
@@ -182,13 +182,20 @@ class PushNotifications {
         await messaging.subscribeToTopic(debugTestTopic);
         debugPrint('push: subscribed to "$debugTestTopic" — test sends only');
       } catch (error) {
-        debugPrint('push: could not subscribe to the test topic — $error');
+        debugPrint('push: could not join the test topic — $error');
       }
     }
 
     if (!_listening) {
       _listening = true;
-      messaging.onTokenRefresh.listen((value) => _token = value);
+
+      messaging.onTokenRefresh.listen((value) {
+        // Subscriptions live against a token. A reissued one has none of them,
+        // so whoever owns the wishes has to assert them again.
+        _token = value;
+        debugPrint('push: registration token was reissued');
+        _tokenChanged.add(null);
+      });
 
       // Status only, no content: enough to prove a message arrived without
       // putting what it said — or who it addressed — into a log.
@@ -217,9 +224,10 @@ class PushNotifications {
     return true;
   }
 
-  /// Waits for Apple to hand over the device token, polling with a widening
-  /// gap. Returns null if it never arrives, which is a reason to try the whole
-  /// registration again later rather than to give up.
+  static bool _isGranted(AuthorizationStatus status) =>
+      status == AuthorizationStatus.authorized ||
+      status == AuthorizationStatus.provisional;
+
   Future<String?> _awaitApnsToken(FirebaseMessaging messaging) async {
     for (var attempt = 1; attempt <= _apnsAttempts; attempt++) {
       try {
@@ -231,5 +239,45 @@ class PushNotifications {
       await Future<void>.delayed(_retryDelay * attempt);
     }
     return null;
+  }
+
+  // ── Topics ─────────────────────────────────────────────────────────────
+
+  /// Joins [topic]. False means it did not happen.
+  ///
+  /// A switch in the interface that flips on while the subscription behind it
+  /// failed tells the user they will be warned about a match they will then
+  /// miss, so this reports rather than throws — and the caller keeps the
+  /// switch off.
+  Future<bool> subscribe(String topic) async {
+    if (!await ensureRegistered(mayPrompt: true)) return false;
+    try {
+      await FirebaseMessaging.instance.subscribeToTopic(topic);
+      return true;
+    } catch (error) {
+      debugPrint('push: subscribe failed — $error');
+      return false;
+    }
+  }
+
+  /// Leaves [topic]. False means the device may still be subscribed.
+  ///
+  /// Never claims success from the absence of a local token. A subscription
+  /// lives on Firebase's side and survives the app being restarted, so "we
+  /// have not registered in this process yet" says nothing about whether this
+  /// device is still going to be sent the message. Reporting success there
+  /// would turn every "switch my alerts off" into a lie that only surfaces
+  /// when the next notification arrives.
+  Future<bool> unsubscribe(String topic) async {
+    if (!await ensureFirebase()) return false;
+    // Silent: turning something off must never raise a permission dialog.
+    if (!await ensureRegistered(mayPrompt: false)) return false;
+    try {
+      await FirebaseMessaging.instance.unsubscribeFromTopic(topic);
+      return true;
+    } catch (error) {
+      debugPrint('push: unsubscribe failed — $error');
+      return false;
+    }
   }
 }

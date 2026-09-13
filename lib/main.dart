@@ -1,10 +1,9 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'player/playback_preferences.dart';
-import 'services/push_notifications.dart';
+import 'services/match_alerts_service.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
 import 'utils/device_type.dart';
@@ -22,10 +21,12 @@ void main() async {
   // before the first frame.
   await DeviceType.preload();
 
-  // Not awaited: registering with APNs or FCM needs the network, and on a cold
-  // start with no signal it would hold the first frame behind a timeout. The
-  // permission dialog can appear a moment after the app is already usable.
-  unawaited(PushNotifications.instance.start());
+  // Alert preferences are read before the first frame so a match card knows
+  // whether its bell is on without flickering.
+  await MatchAlertsService.instance.load();
+  // Silent on purpose: a returning follower has their subscriptions
+  // re-asserted against a possibly new token, and is asked for nothing.
+  unawaited(MatchAlertsService.instance.restoreOnLaunch());
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
