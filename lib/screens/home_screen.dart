@@ -363,7 +363,13 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() => _destination = destination);
         }
       },
-      children: [homePage, const MatchesScreen(embedded: true)],
+      children: [
+        homePage,
+        MatchesScreen(
+          embedded: true,
+          active: _destination == HomeDestination.matches,
+        ),
+      ],
     );
 
     return PopScope(

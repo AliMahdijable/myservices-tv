@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myservices_tv/screens/matches_screen.dart';
+import 'package:myservices_tv/services/football_api_service.dart';
 import 'package:myservices_tv/theme/app_theme.dart';
 
 /// The day strip and the league filter are fixed-height boxes holding Arabic
@@ -12,6 +13,12 @@ import 'package:myservices_tv/theme/app_theme.dart';
 /// a Text that does not fit its box clips instead of reporting an overflow, so
 /// the names lost their lower half in silence, with nothing in the logs.
 void main() {
+  // These are about layout, not loading. Serving fixtures directly keeps the
+  // paced network path — and its timers — out of a test that tears down the
+  // moment it has measured the strips.
+  setUp(() => FootballApiService.debugFixturesOverride = const []);
+  tearDown(FootballApiService.debugReset);
+
   Future<void> pump(
     WidgetTester tester, {
     required Size size,
