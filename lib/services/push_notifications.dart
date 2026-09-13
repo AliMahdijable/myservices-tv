@@ -189,13 +189,29 @@ class PushNotifications {
     if (!_listening) {
       _listening = true;
       messaging.onTokenRefresh.listen((value) => _token = value);
-      FirebaseMessaging.onMessage.listen(_foreground.add);
-      FirebaseMessaging.onMessageOpenedApp.listen(_opened.add);
+
+      // Status only, no content: enough to prove a message arrived without
+      // putting what it said — or who it addressed — into a log.
+      FirebaseMessaging.onMessage.listen((message) {
+        debugPrint(
+          'push: message received in foreground '
+          '(notification: ${message.notification != null}, '
+          'data keys: ${message.data.keys.length})',
+        );
+        _foreground.add(message);
+      });
+      FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        debugPrint('push: app opened from a notification');
+        _opened.add(message);
+      });
 
       // A notification tapped while the app was not running is not delivered
       // to the stream — it is waiting here instead.
       final initial = await messaging.getInitialMessage();
-      if (initial != null) _opened.add(initial);
+      if (initial != null) {
+        debugPrint('push: launched by a notification tap');
+        _opened.add(initial);
+      }
     }
 
     return true;
