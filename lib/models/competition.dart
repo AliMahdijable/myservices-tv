@@ -19,13 +19,22 @@ class Competition {
   static int seasonFor(DateTime date) =>
       date.month >= 7 ? date.year : date.year - 1;
 
+  /// Display order, and the single source of it.
+  ///
+  /// Everything that shows competitions reads this list in order — the filter
+  /// pills on both tabs, the standings tab's opening selection, the league
+  /// sections down the schedule — so the running order lives here and nowhere
+  /// else. It had the Saudi league first, which also made it the table the
+  /// standings tab opened on.
+  ///
+  /// Champions League first, then the other European competitions in the order
+  /// they already had, then Arab competitions last. This is the order the
+  /// competitions are shown in and nothing more: clubs are still ranked by
+  /// points, and matches still run by kickoff time.
   static const List<Competition> all = [
-    Competition(
-      id: 307,
-      name: 'الدوري السعودي للمحترفين',
-      shortName: 'السعودي',
-    ),
+    // ── Champions ──
     Competition(id: 2, name: 'دوري أبطال أوروبا', shortName: 'أبطال أوروبا'),
+    // ── Other European competitions ──
     Competition(id: 3, name: 'الدوري الأوروبي', shortName: 'الأوروبي'),
     Competition(
       id: 39,
@@ -36,7 +45,22 @@ class Competition {
     Competition(id: 135, name: 'الدوري الإيطالي', shortName: 'الإيطالي'),
     Competition(id: 78, name: 'الدوري الألماني', shortName: 'الألماني'),
     Competition(id: 61, name: 'الدوري الفرنسي', shortName: 'الفرنسي'),
+    // ── Arab competitions ──
+    Competition(
+      id: 307,
+      name: 'الدوري السعودي للمحترفين',
+      shortName: 'السعودي',
+    ),
   ];
+
+  /// Where [id] sits in the running order. A competition the app does not
+  /// list sorts after every one it does, rather than ahead of them.
+  static int displayRank(int id) {
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].id == id) return i;
+    }
+    return all.length;
+  }
 
   /// The curated entry for [id], or null when the API returns a competition
   /// this app does not list.

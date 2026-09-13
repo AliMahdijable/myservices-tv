@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
@@ -55,6 +56,15 @@ class FootballApiService {
   static final Map<String, _CacheEntry<List<List<Standing>>>> _standingsCache =
       {};
 
+  /// Fixtures to serve instead of calling the API.
+  ///
+  /// Exists so the schedule's section ordering can be tested against a day
+  /// that is awkward on purpose — an Arab fixture kicking off before a
+  /// European one — without depending on what happens to be played today, and
+  /// without a widget test reaching the network.
+  @visibleForTesting
+  static List<Fixture>? debugFixturesOverride;
+
   static Map<String, String> get _headers => {
     'x-apisports-key': AppConfig.footballApiKey,
   };
@@ -66,6 +76,15 @@ class FootballApiService {
     DateTime date, {
     bool forceRefresh = false,
   }) async {
+    final override = debugFixturesOverride;
+    if (override != null) {
+      // Sorted the way the real merge sorts, so a test sees the same ordering
+      // the screen would really be handed.
+      final sorted = List.of(override)
+        ..sort((a, b) => a.kickoff.compareTo(b.kickoff));
+      return FixturesResult(sorted);
+    }
+
     final ids = Competition.all.map((c) => c.id).toList();
     final results = await Future.wait(
       ids.map((id) => _fetchLeague(id, date, forceRefresh: forceRefresh)),
@@ -86,6 +105,13 @@ class FootballApiService {
     DateTime date, {
     bool forceRefresh = false,
   }) async {
+    final override = debugFixturesOverride;
+    if (override != null) {
+      final sorted = override.where((f) => f.leagueId == leagueId).toList()
+        ..sort((a, b) => a.kickoff.compareTo(b.kickoff));
+      return FixturesResult(sorted);
+    }
+
     final fetch = await _fetchLeague(
       leagueId,
       date,

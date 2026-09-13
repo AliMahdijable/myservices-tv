@@ -352,12 +352,25 @@ class _FixturesList extends StatelessWidget {
   Widget build(BuildContext context) {
     // Grouped by league so the list reads like a program guide rather than a
     // flat stream of unrelated matches.
-    final order = <int>[];
     final grouped = <int, List<Fixture>>{};
     for (final f in fixtures) {
-      if (!grouped.containsKey(f.leagueId)) order.add(f.leagueId);
       grouped.putIfAbsent(f.leagueId, () => []).add(f);
     }
+
+    // Sections follow the running order in Competition.all — Champions first,
+    // Arab competitions last. They used to follow whichever league happened to
+    // kick off earliest, so an early Saudi fixture pushed the Champions League
+    // to the bottom of the day. Matches inside a section keep their kickoff
+    // order, which is the order they arrived in.
+    final order = grouped.keys.toList()
+      ..sort((a, b) {
+        final byRank = Competition.displayRank(
+          a,
+        ).compareTo(Competition.displayRank(b));
+        if (byRank != 0) return byRank;
+        // Two competitions the app does not list: keep the earlier one first.
+        return grouped[a]!.first.kickoff.compareTo(grouped[b]!.first.kickoff);
+      });
 
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
