@@ -1,0 +1,5 @@
+# Kept deliberately small: this runs on a shared box next to nginx and should
+# not need a compiler or a virtualenv full of transitive dependencies.
+requests==2.32.3
+google-auth==2.35.0
+tomli==2.0.1 ; python_version < "3.11"

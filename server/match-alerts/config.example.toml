@@ -1,0 +1,35 @@
+# Copy to /etc/match-alerts/config.toml and fill in.
+# Nothing secret belongs in this file except the API-Football key; the FCM
+# credential lives in its own file, referenced by path.
+
+[api_football]
+key  = "PUT-THE-API-FOOTBALL-KEY-HERE"
+base = "https://v3.football.api-sports.io"
+# The competitions the app shows, in the app's own running order.
+leagues = [2, 3, 39, 140, 135, 78, 61, 307]
+
+[fcm]
+project_id = "iptv-player-7e925"
+# A service account with cloudmessaging.messages.create and nothing else.
+# Leave empty to fall back to Application Default Credentials.
+credentials_file = "/etc/match-alerts/service-account.json"
+
+[worker]
+# How often to look. API-Football's plan allows 7500 requests a day; one poll
+# costs one request per league, so 60s across 8 leagues is ~11500/day — too
+# many. 120s is ~5760 and leaves room for the app itself.
+poll_seconds = 120
+
+# Where the sent-log lives. Must survive a restart, or every restart would
+# re-announce the matches it had already announced.
+state_db = "/var/lib/match-alerts/state.db"
+
+# How late an alert may be and still be worth sending. A worker that has been
+# down for an hour must not wake up and fire everyone's 45-minute warnings for
+# matches that have already kicked off.
+catchup_grace_minutes = 10
+
+# Nothing is sent while this is true. It is true by default on purpose: a
+# sender that starts talking to real phones the moment it is installed is the
+# wrong default for a thing that cannot be unsent.
+dry_run = true

@@ -1,0 +1,41 @@
+[Unit]
+Description=Match alerts sender (MyServices TV)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=match-alerts
+Group=match-alerts
+
+WorkingDirectory=/opt/match-alerts
+ExecStart=/opt/match-alerts/venv/bin/python -m match_alerts --config /etc/match-alerts/config.toml
+
+Restart=always
+RestartSec=15
+
+# The sent-log must survive a restart; it is the only thing stopping a restart
+# from announcing every match it already announced.
+StateDirectory=match-alerts
+StateDirectoryMode=0750
+
+# Nothing here needs to write anywhere else, or to see the rest of the box.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/match-alerts
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=match-alerts
+
+[Install]
+WantedBy=multi-user.target
