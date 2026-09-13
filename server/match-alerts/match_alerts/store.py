@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS observations (
+    fixture_id INTEGER PRIMARY KEY,
+    observed_at TEXT NOT NULL
+);
+
 -- Events that were detected but not successfully sent.
 --
 -- A transition is observed once. Without somewhere to put it, a kickoff whose
@@ -70,7 +75,7 @@ _STATUS_RANK = {
 
 #: Statuses that mean the match is in play, mirrored from events.PLAYING_CODES
 #: so the store can answer "what was live last pass" without importing it.
-_LIVE = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE")
+_LIVE = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT")
 
 #: Recorded against an event that was deliberately not sent, so it is never
 #: reconsidered — a stale catch-up, or a match that was called off.
@@ -87,9 +92,39 @@ class SentLog:
         self._db = sqlite3.connect(str(self.path), isolation_level=None)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
+        # Upgrades preserve the sent ledger, including an older installation.
+        columns = {row[1] for row in self._db.execute('PRAGMA table_info(kickoffs)')}
+        for name, declaration in (
+            ('changed_at', 'TEXT'),
+            ('awaiting_result', 'INTEGER NOT NULL DEFAULT 0'),
+        ):
+            if name not in columns:
+                self._db.execute(f'ALTER TABLE kickoffs ADD COLUMN {name} {declaration}')
 
     def close(self) -> None:
         self._db.close()
+
+    def observed_at(self, fixture_id: int) -> datetime | None:
+        row = self._db.execute(
+            'SELECT observed_at FROM observations WHERE fixture_id=?', (fixture_id,)
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
+    def observe(self, fixture_id: int, now: datetime) -> None:
+        self._db.execute(
+            'INSERT INTO observations VALUES (?,?) ON CONFLICT(fixture_id) '
+            'DO UPDATE SET observed_at=excluded.observed_at',
+            (fixture_id, now.astimezone(timezone.utc).isoformat()),
+        )
+
+    def reset_postponed(self, fixture_id: int) -> None:
+        self._db.execute('DELETE FROM kickoffs WHERE fixture_id=?', (fixture_id,))
+        self._db.execute('DELETE FROM observations WHERE fixture_id=?', (fixture_id,))
+        self.clear_all_pending(fixture_id)
+        self._db.execute(
+            'DELETE FROM sent WHERE fixture_id=? AND outcome=?',
+            (fixture_id, OUTCOME_SKIPPED),
+        )
 
     # ── the duplicate guard ────────────────────────────────────────────────
 
@@ -373,6 +408,11 @@ class SentLog:
             (stamp,),
         )
         removed = cursor.rowcount or 0
+        for table in ('pending', 'observations'):
+            self._db.execute(
+                f'DELETE FROM {table} WHERE fixture_id IN '
+                '(SELECT fixture_id FROM kickoffs WHERE kickoff < ?)', (stamp,)
+            )
         self._db.execute("DELETE FROM kickoffs WHERE kickoff < ?", (stamp,))
         return removed
 

@@ -120,20 +120,21 @@ class Config:
                 "let alerts fall between two passes and never be sent"
             )
 
-        max_result_age = int(worker.get("max_result_age_minutes", 240))
+        max_result_age = int(worker.get("max_result_age_minutes", 15))
         if max_result_age < 1:
             raise ConfigError("worker.max_result_age_minutes must be positive")
 
-        pre_match_retry = int(worker.get("pre_match_retry_seconds", 300))
+        pre_match_retry = int(worker.get("pre_match_retry_seconds", 120))
         if pre_match_retry < poll:
             raise ConfigError(
                 "worker.pre_match_retry_seconds shorter than the poll leaves no "
                 "pass in which to retry"
             )
 
-        state_db = Path(str(worker.get("state_db") or "")).expanduser()
-        if not str(state_db):
+        raw_state_db = str(worker.get("state_db") or "").strip()
+        if not raw_state_db:
             raise ConfigError("worker.state_db is not set")
+        state_db = Path(raw_state_db).expanduser()
 
         return Config(
             api=ApiFootballConfig(

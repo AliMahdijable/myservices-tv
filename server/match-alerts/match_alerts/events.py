@@ -57,6 +57,7 @@ class Fixture:
     home_goals: int | None = None
     away_goals: int | None = None
     #: Shootout score, present only when [status] is PEN.
+    elapsed: int | None = None
     home_penalties: int | None = None
     away_penalties: int | None = None
 
@@ -99,6 +100,7 @@ class Fixture:
                 away_name=str(teams["away"].get("name") or ""),
                 home_goals=_maybe_int(goals.get("home")),
                 away_goals=_maybe_int(goals.get("away")),
+                elapsed=_maybe_int((fixture.get("status") or {}).get("elapsed")),
                 home_penalties=_maybe_int(penalty.get("home")),
                 away_penalties=_maybe_int(penalty.get("away")),
             )
@@ -135,7 +137,7 @@ def due_events(
     previous_status: str | None = None,
     enabled_types: tuple[str, ...] = ALL_TYPES,
     max_result_age: timedelta | None = None,
-    max_kickoff_age: timedelta = timedelta(minutes=20),
+    max_kickoff_age: timedelta = timedelta(minutes=5),
 ) -> list[DueEvent]:
     """The events that should be sent for [fixture] at [now].
 
@@ -211,7 +213,11 @@ def _has_started(
         return False
     if fixture.status not in PLAYING_CODES:
         return False
-    return now - fixture.kickoff <= max_kickoff_age
+    if fixture.status not in ("1H", "LIVE"):
+        return False
+    if fixture.elapsed is not None:
+        return 0 <= fixture.elapsed <= 3
+    return timedelta(0) <= now - fixture.kickoff <= max_kickoff_age
 
 
 def _pre_match_event(

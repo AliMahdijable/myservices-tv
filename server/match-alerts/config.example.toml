@@ -33,11 +33,11 @@ schedule_refresh_seconds = 1800
 pre_match_window_seconds = 0
 
 # How long a failed pre-match alert stays worth retrying.
-pre_match_retry_seconds = 300
+pre_match_retry_seconds = 120
 
 # A result older than this is not announced, measured from when the finish was
 # first seen rather than from kickoff.
-max_result_age_minutes = 240
+max_result_age_minutes = 15
 
 # Nothing is sent while this is true, and it is the only thing that decides it
 # for the service. `--send` on the command line overrides it for one manual

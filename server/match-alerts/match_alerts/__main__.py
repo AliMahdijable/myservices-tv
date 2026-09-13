@@ -11,6 +11,7 @@ required to override it. Nothing here can send by accident.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import logging
 import sys
 from dataclasses import replace
@@ -30,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--send",
         action="store_true",
-        help="actually send. Without it nothing leaves the machine.",
+        help="override dry_run for this run; config controls the service",
     )
     parser.add_argument(
         "--validate-condition",
@@ -86,6 +87,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         logging.getLogger("match-alerts").info("condition validated, sending is live")
 
+    # A manual --once invocation must not race the systemd service and send
+    # the same event before either process writes its success to SQLite.
+    process_lock = open(str(config.worker.state_db) + ".lock", "a")
+    try:
+        fcntl.flock(process_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("another sender is already using this state database", file=sys.stderr)
+        return 2
+
     if args.once:
         report = worker.tick()
         print(
@@ -98,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         for problem in report.api_errors:
             print(f"  api: {problem}", file=sys.stderr)
-        return 1 if report.failed else 0
+        return 1 if report.failed or report.api_errors else 0
 
     worker.run_forever()
     return 0

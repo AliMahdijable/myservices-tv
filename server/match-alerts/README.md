@@ -41,7 +41,7 @@ python -m match_alerts --config /etc/match-alerts/config.toml --validate-conditi
 ```
 
 That uses `validateOnly`, so FCM parses and checks the message and returns
-without delivering it — no device is reached and no quota is spent. Running
+without delivering it; no device is reached. Running
 without a successful validation refuses to send rather than quietly sending
 without the exclusion, because the failure would be invisible: the only symptom
 is people who muted a match being notified about it.
@@ -68,13 +68,17 @@ sudo $EDITOR /etc/match-alerts/config.toml
 # The service account key. Readable by the service user and nobody else.
 sudo install -o match-alerts -g match-alerts -m 0400 \
     service-account.json /etc/match-alerts/service-account.json
-sudo chown -R match-alerts:match-alerts /opt/match-alerts /etc/match-alerts
+sudo chown -R root:match-alerts /etc/match-alerts
+sudo chmod 0750 /etc/match-alerts
+sudo chmod 0640 /etc/match-alerts/config.toml /etc/match-alerts/service-account.json
+sudo install -d -o match-alerts -g match-alerts -m 0750 /var/lib/match-alerts
 ```
 
 ## Run it once, sending nothing
 
-`dry_run = true` is the default in the config, and `--send` is required to
-override it. Both have to be wrong before anything reaches a phone.
+`dry_run = true` is the default. Setting it to false enables the service;
+`--send` overrides it for a single manual invocation. Use a separate state
+database for simulations, because dry-run events are recorded as handled.
 
 ```sh
 sudo -u match-alerts /opt/match-alerts/venv/bin/python -m match_alerts \
@@ -116,9 +120,9 @@ API-Football's plan allows 7,500 requests a day, shared with the app itself.
 |---|---|---|---|
 | the day's fixtures, all competitions in one call | 1 request | every 30 min, for today and tomorrow | 96 |
 | the live feed | 1 request | every 60 s | 1,440 |
-| a match that just left the live feed | 1 request per 20 | only when one ends | tens |
+| result lookups and confirming cached reminders | 1 request per 20 | as needed before sending | varies |
 
-About **1,536 a day**. The obvious shape — one request per competition per day,
+**1,536 base requests a day**, plus batched confirmations and retries. The obvious shape — one request per competition per day,
 every poll — costs 11,520 and would exhaust the plan before the evening
 kickoffs. There is a test asserting this.
 
@@ -137,11 +141,13 @@ kickoffs. There is a test asserting this.
   states the real number of minutes left.
 * Send times in the server's timezone. The box is on UTC; notifications say
   Asia/Baghdad.
-* Announce anything twice. The sent-log is SQLite on disk precisely so that a
-  restart cannot undo it.
+* Repeat a recorded successful send after restarting. A process lock prevents
+  two local senders sharing the same ledger. FCM has no exactly-once delivery
+  guarantee: ambiguous transport outcomes are recorded and not retried, to
+  avoid a second broadcast after a timeout that may have followed acceptance.
 * Lose a moment because a send failed. A transition happens once, so a failed
   send is queued with the time it was observed and retried from there. A
-  result stays worth retrying for hours; "in 45 minutes" does not, so a queued
+  result may be retried for 15 minutes by default; "in 45 minutes" does not, so a queued
   reminder has a window of minutes, is regenerated from the current kickoff
   rather than replayed, and is dropped the moment the match starts, moves, or
   is called off.
@@ -149,8 +155,10 @@ kickoffs. There is a test asserting this.
   finished before its goals arrive is kept on an awaiting-result list and
   asked about directly — its status will never change again, so nothing else
   would ever look.
-* Announce a result it saw hours ago. Freshness is measured from when the
-  finish was first observed, not from kickoff.
+* Announce a result first discovered after a long outage. A final result
+  requires a live observation within the preceding five minutes; missing
+  goals and shootout scores are awaited for up to 15 minutes. A long match
+  is supported because freshness is independent of its scheduled kickoff.
 
 ## Files
 
@@ -161,5 +169,5 @@ match_alerts/events.py        which moments are due, and what each one says
 match_alerts/store.py         the sent-log, the statuses, the retry queue
 match_alerts/fcm.py           the condition, the send, the validation
 match_alerts/worker.py        the loop
-tests/                        38 tests, all of them with time as a parameter
+tests/                        54 behavior tests, using a controlled clock
 ```

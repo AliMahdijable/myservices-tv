@@ -66,3 +66,7 @@ android/.kotlin/
 # from the Firebase console for com.myservices.myservicesTv when setting up a
 # new machine; without it the app still builds and runs, it simply has no push.
 ios/Runner/GoogleService-Info.plist
+
+# Python test cache from the alert sender
+server/match-alerts/.pytest_cache/
+server/match-alerts/**/__pycache__/

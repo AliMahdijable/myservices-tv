@@ -66,7 +66,9 @@ class FakeApi:
     def by_ids(self, ids):
         self.by_ids_calls.append(list(ids))
         self.requests_made += 1
-        return [self.by_id[i] for i in ids if i in self.by_id]
+        available = {f.id: f for f in self.schedule + self.live_now}
+        available.update(self.by_id)
+        return [available[i] for i in ids if i in available]
 
 
 class FakeFcm:
@@ -93,8 +95,8 @@ def make_worker(tmp_path: Path, dry_run=False) -> tuple[Worker, FakeApi, FakeFcm
             schedule_refresh_seconds=1800,
             state_db=tmp_path / "state.db",
             pre_match_window_seconds=120,
-            max_result_age_minutes=240,
-            pre_match_retry_seconds=300,
+            max_result_age_minutes=15,
+            pre_match_retry_seconds=120,
             dry_run=dry_run,
         ),
     )
@@ -179,6 +181,9 @@ class TestStatusDoesNotRegress:
         worker.tick(now=KICKOFF_AT + timedelta(minutes=1))
         assert any(t == "بدأت المباراة" for _, t, _ in fcm.sent)
 
+        # The worker observed the second half just before the final whistle.
+        api.live_now = [make_fixture(status="2H")]
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=119))
         # ...then the live feed drops it and the schedule still lists it as NS.
         api.live_now = []
         api.by_id = {1: make_fixture(status="FT", home_goals=2, away_goals=0)}
@@ -438,6 +443,7 @@ class TestWaitingForAScore:
         worker._schedule_fetched_at = None
         worker.tick(now=KICKOFF_AT + timedelta(minutes=60))
 
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=109))
         # Finished, but the goals have not landed yet.
         api.live_now = []
         api.by_id = {1: make_fixture(status="FT")}

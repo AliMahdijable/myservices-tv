@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import google.auth
+from google.auth.exceptions import GoogleAuthError
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import service_account
@@ -80,6 +81,7 @@ def alert_condition(
 class SendResult:
     ok: bool
     detail: str
+    retryable: bool = True
 
 
 class FcmClient:
@@ -134,8 +136,14 @@ class FcmClient:
                 data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
                 timeout=20,
             )
+        except GoogleAuthError as error:
+            return SendResult(False, f"authentication: {error.__class__.__name__}")
+        except requests.ConnectTimeout:
+            return SendResult(False, "transport: ConnectTimeout")
         except requests.RequestException as error:
-            return SendResult(False, f"transport: {error.__class__.__name__}")
+            return SendResult(False,
+                              f"delivery unconfirmed: {error.__class__.__name__}",
+                              retryable=False)
 
         if response.status_code == 200:
             return SendResult(True, "ok")
@@ -168,8 +176,14 @@ class FcmClient:
                     "apns-expiration": "0",
                 },
             },
-            "android": {"priority": "high", "ttl": "3600s"},
+            "android": {"priority": "high", "ttl": (
+                "900s" if (data or {}).get("type") == "ft" else "120s"
+            )},
         }
+        if data and data.get("fixtureId") and data.get("type"):
+            message["apns"]["headers"]["apns-collapse-id"] = (
+                f"match-{data['fixtureId']}-{data['type']}"
+            )
         return self._post(message, validate_only)
 
     def validate_negation(self) -> SendResult:
