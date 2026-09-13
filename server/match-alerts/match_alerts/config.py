@@ -47,9 +47,12 @@ class WorkerConfig:
     #: not to a comfortable round number: an alert titled "in 45 minutes" that
     #: arrives 35 minutes before kickoff is wrong in a way nobody can detect.
     pre_match_window_seconds: int
-    #: A result older than this is not announced. Stops a worker that was down
-    #: all evening from reporting scores everyone already knows.
+    #: A result older than this is not announced. Measured from when the
+    #: finish was first seen, not from kickoff.
     max_result_age_minutes: int
+    #: How long a failed pre-match alert stays worth retrying. Short: "in 45
+    #: minutes" is worth nothing once the match has started.
+    pre_match_retry_seconds: int
     dry_run: bool
 
 
@@ -121,6 +124,13 @@ class Config:
         if max_result_age < 1:
             raise ConfigError("worker.max_result_age_minutes must be positive")
 
+        pre_match_retry = int(worker.get("pre_match_retry_seconds", 300))
+        if pre_match_retry < poll:
+            raise ConfigError(
+                "worker.pre_match_retry_seconds shorter than the poll leaves no "
+                "pass in which to retry"
+            )
+
         state_db = Path(str(worker.get("state_db") or "")).expanduser()
         if not str(state_db):
             raise ConfigError("worker.state_db is not set")
@@ -138,6 +148,7 @@ class Config:
                 state_db=state_db,
                 pre_match_window_seconds=window,
                 max_result_age_minutes=max_result_age,
+                pre_match_retry_seconds=pre_match_retry,
                 # Absent means dry-run. Sending is the thing you opt into.
                 dry_run=bool(worker.get("dry_run", True)),
             ),

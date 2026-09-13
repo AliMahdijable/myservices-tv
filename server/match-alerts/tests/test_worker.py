@@ -94,6 +94,7 @@ def make_worker(tmp_path: Path, dry_run=False) -> tuple[Worker, FakeApi, FakeFcm
             state_db=tmp_path / "state.db",
             pre_match_window_seconds=120,
             max_result_age_minutes=240,
+            pre_match_retry_seconds=300,
             dry_run=dry_run,
         ),
     )
@@ -349,3 +350,175 @@ class TestRequestBudget:
         # One request per league per day, every poll: 8 x 2 x 720.
         naive = 8 * 2 * (24 * 60 * 60 // 120)
         assert naive > 7500
+
+
+class TestRetryDoesNotReplayStaleText:
+    def test_a_queued_45_warning_is_not_sent_two_hours_later(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        fcm.ok = False
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=45))
+        assert fcm.sent == []
+
+        fcm.ok = True
+        worker.tick(now=KICKOFF_AT + timedelta(hours=2))
+
+        assert fcm.sent == [], "nobody wants a 45-minute warning after the match"
+
+    def test_a_queued_warning_is_dropped_once_the_match_starts(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        fcm.ok = False
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=15))
+        fcm.ok = True
+
+        api.live_now = [make_fixture(status="1H")]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=1))
+
+        titles = [t for _, t, _ in fcm.sent]
+        assert "بعد ١٥ دقيقة" not in titles
+        assert "بدأت المباراة" in titles
+
+    def test_a_retried_warning_states_the_minutes_actually_left(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        fcm.ok = False
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=45))
+        fcm.ok = True
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=43))
+
+        assert fcm.sent, "the retry should have gone out"
+        assert "٤٣" in fcm.sent[0][1], "it must not replay the stored wording"
+
+    def test_a_reschedule_drops_the_queued_warning(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        fcm.ok = False
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=45))
+        fcm.ok = True
+
+        api.schedule = [make_fixture(kickoff=KICKOFF_AT + timedelta(days=1))]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=40))
+
+        assert fcm.sent == [], "that warning was about a kickoff that moved"
+
+    def test_a_cancellation_drops_the_queued_warning(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        fcm.ok = False
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=45))
+        fcm.ok = True
+
+        api.schedule = [make_fixture(status="CANC")]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT - timedelta(minutes=44))
+
+        assert fcm.sent == []
+
+
+class TestWaitingForAScore:
+    def test_a_finish_without_goals_is_chased_until_they_arrive(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        api.live_now = [make_fixture(status="2H")]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=60))
+
+        # Finished, but the goals have not landed yet.
+        api.live_now = []
+        api.by_id = {1: make_fixture(status="FT")}
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=110))
+        assert fcm.sent == [] or all(
+            "انتهت" not in t for _, t, _ in fcm.sent
+        ), "a result with no score must not be announced"
+
+        # The next pass has them. It would never be asked for again without
+        # the awaiting-result list, because a finished match leaves the live
+        # feed and its status never changes again.
+        api.by_id = {1: make_fixture(status="FT", home_goals=3, away_goals=1)}
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=112))
+
+        bodies = [b for _, _, b in fcm.sent]
+        assert any("3 - 1" in b for b in bodies)
+
+    def test_a_shootout_waits_for_the_shootout_score(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        api.live_now = [make_fixture(status="P")]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=120))
+
+        api.live_now = []
+        api.by_id = {1: make_fixture(status="PEN", home_goals=1, away_goals=1)}
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=125))
+        assert fcm.sent == [], "reporting 1-1 would say a decided tie was drawn"
+
+        api.by_id = {
+            1: make_fixture(
+                status="PEN",
+                home_goals=1,
+                away_goals=1,
+                home_penalties=5,
+                away_penalties=4,
+            )
+        }
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=127))
+        assert any("5-4" in b for _, _, b in fcm.sent)
+
+
+class TestResultFreshness:
+    def test_a_result_seen_hours_ago_is_not_announced_now(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        # The finish is first seen here, and the send fails.
+        fcm.ok = False
+        api.live_now = []
+        api.by_id = {1: make_fixture(status="FT", home_goals=2, away_goals=0)}
+        api.schedule = [make_fixture(status="FT", home_goals=2, away_goals=0)]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(hours=2))
+
+        # Nine hours later it is not news, however recently we managed to send.
+        fcm.ok = True
+        worker.tick(now=KICKOFF_AT + timedelta(hours=11))
+
+        assert fcm.sent == []
+
+
+class TestAuthoritativeStatus:
+    def test_a_schedule_refresh_cannot_undo_a_kickoff(self, tmp_path):
+        worker, api, fcm = make_worker(tmp_path)
+        api.schedule = [make_fixture()]
+        worker.tick(now=KICKOFF_AT - timedelta(days=1))
+
+        api.live_now = [make_fixture(status="1H")]
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=1))
+        assert len(fcm.sent) == 1
+
+        # The schedule still lists it as NS and the live feed is empty for a
+        # pass. Reasoning from the raw read would announce a second kickoff.
+        api.live_now = []
+        api.by_id = {}
+        worker._schedule_fetched_at = None
+        worker.tick(now=KICKOFF_AT + timedelta(minutes=3))
+
+        assert len(fcm.sent) == 1

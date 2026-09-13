@@ -15,21 +15,33 @@ project_id = "iptv-player-7e925"
 credentials_file = "/etc/match-alerts/service-account.json"
 
 [worker]
-# How often to look. API-Football's plan allows 7500 requests a day; one poll
-# costs one request per league, so 60s across 8 leagues is ~11500/day — too
-# many. 120s is ~5760 and leaves room for the app itself.
-poll_seconds = 120
-
 # Where the sent-log lives. Must survive a restart, or every restart would
 # re-announce the matches it had already announced.
 state_db = "/var/lib/match-alerts/state.db"
 
-# How late an alert may be and still be worth sending. A worker that has been
-# down for an hour must not wake up and fire everyone's 45-minute warnings for
-# matches that have already kicked off.
-catchup_grace_minutes = 10
+# How often the live feed is read. One request each time.
+poll_seconds = 60
 
-# Nothing is sent while this is true. It is true by default on purpose: a
-# sender that starts talking to real phones the moment it is installed is the
-# wrong default for a thing that cannot be unsent.
+# How often the day's fixture list is re-read, for today and tomorrow. Kickoff
+# times barely move, so this is the cheap half of the request budget.
+schedule_refresh_seconds = 1800
+
+# How late a pre-match alert may be and still be sent. Sized to the poll, not
+# to a comfortable round number: an alert titled "in 45 minutes" arriving 35
+# minutes before kickoff is wrong in a way the reader cannot detect.
+# Leave at 0 to use twice the poll interval.
+pre_match_window_seconds = 0
+
+# How long a failed pre-match alert stays worth retrying.
+pre_match_retry_seconds = 300
+
+# A result older than this is not announced, measured from when the finish was
+# first seen rather than from kickoff.
+max_result_age_minutes = 240
+
+# Nothing is sent while this is true, and it is the only thing that decides it
+# for the service. `--send` on the command line overrides it for one manual
+# run; there is no other switch. True by default on purpose: a sender that
+# starts talking to real phones the moment it is installed is the wrong default
+# for something that cannot be unsent.
 dry_run = true

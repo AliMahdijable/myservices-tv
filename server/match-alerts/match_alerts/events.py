@@ -257,14 +257,10 @@ def _full_time_event(fixture: Fixture) -> DueEvent | None:
         # as a draw.
         home_pens, away_pens = fixture.home_penalties, fixture.away_penalties
         if home_pens is None or away_pens is None:
-            # The shootout score is not in yet. Say that it went to penalties
-            # rather than guess who won it.
-            return DueEvent(
-                fixture=fixture,
-                type=FULL_TIME,
-                title="انتهت بركلات الترجيح",
-                body=f"{body} — النتيجة النهائية بعد قليل",
-            )
+            # Not yet. Saying "the result is coming shortly" would be the only
+            # notification ever sent about this match — the event would be
+            # recorded as handled and the real score would never follow.
+            return None
         body += f" ({home_pens}-{away_pens} بركلات الترجيح)"
         title = "انتهت بركلات الترجيح"
     elif fixture.status == "AET":

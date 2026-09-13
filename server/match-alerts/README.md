@@ -104,8 +104,9 @@ sudo systemctl enable --now match-alerts
 journalctl -u match-alerts -f
 ```
 
-Set `dry_run = false` in the config once you are happy; `--send` is for trying
-it by hand.
+`dry_run` in the config is the only thing that decides this for the service.
+`--send` overrides it for one manual run and nothing else — there is no second
+switch and no environment variable. Set `dry_run = false` once you are happy.
 
 ## The request budget
 
@@ -139,8 +140,17 @@ kickoffs. There is a test asserting this.
 * Announce anything twice. The sent-log is SQLite on disk precisely so that a
   restart cannot undo it.
 * Lose a moment because a send failed. A transition happens once, so a failed
-  send is queued with the time it was observed and retried from there — until
-  it is too old to be worth sending.
+  send is queued with the time it was observed and retried from there. A
+  result stays worth retrying for hours; "in 45 minutes" does not, so a queued
+  reminder has a window of minutes, is regenerated from the current kickoff
+  rather than replayed, and is dropped the moment the match starts, moves, or
+  is called off.
+* Give up on a result because the match left the live feed. A fixture marked
+  finished before its goals arrive is kept on an awaiting-result list and
+  asked about directly — its status will never change again, so nothing else
+  would ever look.
+* Announce a result it saw hours ago. Freshness is measured from when the
+  finish was first observed, not from kickoff.
 
 ## Files
 

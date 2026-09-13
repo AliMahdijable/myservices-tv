@@ -158,15 +158,17 @@ class TestResult:
         assert "4-3" in events[0].body
         assert "الترجيح" in events[0].body
 
-    def test_a_shootout_without_its_score_does_not_guess_a_winner(self):
+    def test_a_shootout_without_its_score_announces_nothing_yet(self):
+        # Sending "the result is coming shortly" would be the only thing ever
+        # said about this match: the event would be marked handled and the real
+        # score would never follow it.
         events = due_events(
             fixture(status="PEN", home_goals=1, away_goals=1),
             KICKOFF_AT + timedelta(hours=3),
             WINDOW,
             previous_status="P",
         )
-        assert "الترجيح" in events[0].title
-        assert "4-3" not in events[0].body
+        assert events == []
 
     def test_extra_time_is_labelled(self):
         events = due_events(

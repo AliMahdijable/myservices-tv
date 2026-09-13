@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 
 from .api_football import ApiFootball, ApiFootballError
 from .config import Config
-from .events import ALL_TYPES, DueEvent, Fixture, due_events
+from .events import (
+    ALL_TYPES,
+    BEFORE_15,
+    BEFORE_45,
+    FULL_TIME,
+    DueEvent,
+    Fixture,
+    due_events,
+)
 from .fcm import FcmClient, FcmError, SendResult, alert_condition
 from .store import (
     OUTCOME_DRY_RUN,
@@ -103,22 +111,52 @@ class Worker:
 
         report.retried = self._retry_pending(now, report)
 
-        for fixture in fixtures:
+        # A gap since the last pass is worth knowing about, but it is not what
+        # keeps backlog out. The pre-match windows are seconds wide, so an
+        # alert that came due during an outage is simply not returned any more;
+        # a kickoff needs a transition that is also recent; and a result is
+        # measured from when the finish was first seen. Suppressing everything
+        # on the pass after a gap would also have thrown away the alerts that
+        # fell due after the worker was back.
+        last_tick = self.store.last_tick()
+        if (
+            last_tick is not None
+            and now - last_tick
+            > timedelta(seconds=self.config.worker.poll_seconds * 5)
+        ):
+            log.warning(
+                "no pass since %s — anything that came due in the gap has "
+                "fallen outside its window and will not be sent",
+                last_tick.isoformat(),
+            )
+
+        for raw in fixtures:
             report.fixtures_seen += 1
-            previous_status = self.store.status_of(fixture.id)
+            previous_status = self.store.status_of(raw.id)
+            # Reason about the real state. Preventing a regression in the
+            # database is not enough: the pass that observed a finished match
+            # read back as NS still has to know it has finished.
+            fixture = _with_status(
+                raw, self.store.authoritative_status(raw.id, raw.status)
+            )
 
             # A fixture that has moved gets its pre-match record cleared, so the
             # warnings can be given again for the time it will now be played.
             if self.store.kickoff_changed(fixture.id, fixture.kickoff):
                 self.store.forget_pre_match(fixture.id)
+                # A queued reminder is about a kickoff that no longer exists.
+                self.store.clear_all_pending(fixture.id)
                 report.rescheduled += 1
                 log.info("fixture %s was rescheduled", fixture.id)
 
-            self.store.remember_status(fixture.id, fixture.kickoff, fixture.status)
-
             if fixture.is_abnormal:
-                # Called off. Close out every moment so nothing fires later if
-                # the status flaps back.
+                # Called off. Anything queued about it is about a match that
+                # will not be played.
+                self.store.clear_all_pending(fixture.id)
+                self.store.set_awaiting_result(fixture.id, False)
+                self.store.remember_status(
+                    fixture.id, fixture.kickoff, fixture.status, now
+                )
                 for alert_type in ALL_TYPES:
                     if not self.store.already_handled(fixture.id, alert_type):
                         self.store.record(
@@ -129,19 +167,50 @@ class Worker:
                         )
                 continue
 
-            for event in due_events(
+            # A finished fixture whose goals have not arrived leaves the live
+            # feed immediately. Marking it so keeps the follow-up lookup going;
+            # without it the result is simply never announced.
+            waiting = fixture.is_finished and not _result_is_complete(fixture)
+            self.store.set_awaiting_result(fixture.id, waiting)
+
+            self.store.remember_status(
+                fixture.id, fixture.kickoff, fixture.status, now
+            )
+
+            events = due_events(
                 fixture,
                 now,
                 window,
                 previous_status=previous_status,
                 max_result_age=max_result_age,
-            ):
+            )
+            for event in events:
                 if self.store.already_handled(event.fixture.id, event.type):
+                    continue
+                # Result freshness is measured from when the finish was first
+                # seen, not from kickoff: a match that ended an hour ago while
+                # this was down is not news either.
+                if event.type == FULL_TIME and self._result_is_stale(
+                    fixture, now, max_result_age
+                ):
+                    self.store.record(
+                        fixture.id, FULL_TIME, OUTCOME_SKIPPED, "result stale"
+                    )
+                    report.skipped_stale += 1
                     continue
                 report.due += 1
                 self._handle(event, now, report)
 
+        self.store.remember_tick(now)
         return report
+
+    def _result_is_stale(
+        self, fixture: Fixture, now: datetime, max_age: timedelta
+    ) -> bool:
+        seen = self.store.changed_at(fixture.id)
+        if seen is None:
+            return False
+        return now - seen > max_age
 
     def _baseline(
         self, fixture: Fixture, now: datetime, report: TickReport
@@ -153,7 +222,9 @@ class Worker:
         today would cost the user every alert for the first two days — the
         exact window in which they are deciding whether the feature works.
         """
-        self.store.remember_status(fixture.id, fixture.kickoff, fixture.status)
+        self.store.remember_status(
+            fixture.id, fixture.kickoff, fixture.status, now
+        )
         for alert_type in ALL_TYPES:
             if _moment_has_passed(fixture, alert_type, now):
                 self.store.record(
@@ -164,17 +235,30 @@ class Worker:
     def _retry_pending(self, now: datetime, report: TickReport) -> int:
         """Re-attempts events whose send failed, while they are still worth it.
 
-        A transition is observed once. Retrying from the observation rather
-        than from the transition is what makes a failed kickoff recoverable:
-        by the next pass the status has moved on and there is no transition
-        left to notice.
+        A transition is observed once, so retrying from the observation is what
+        makes a failed kickoff recoverable — by the next pass the status has
+        moved on and there is no transition left to notice.
+
+        The windows differ by kind, because the alerts do. A result is worth
+        having late; "in 45 minutes" is worth nothing once the match has
+        started, and replaying the stored wording two hours on would announce a
+        kickoff that already happened. Reminders are regenerated from the
+        current kickoff and dropped the moment the match is no longer waiting
+        to start.
         """
-        freshness = timedelta(minutes=self.config.worker.max_result_age_minutes)
         retried = 0
-        for fixture_id, event_type, observed_at, title, body, attempts in (
+        for fixture_id, event_type, observed_at, title, body, _ in (
             self.store.pending_events()
         ):
-            if now - observed_at > freshness:
+            age = now - observed_at
+            limit = (
+                timedelta(minutes=self.config.worker.max_result_age_minutes)
+                if event_type == FULL_TIME
+                else timedelta(
+                    seconds=self.config.worker.pre_match_retry_seconds
+                )
+            )
+            if age > limit:
                 self.store.clear_pending(fixture_id, event_type)
                 self.store.record(
                     fixture_id, event_type, OUTCOME_SKIPPED, "pending expired"
@@ -185,9 +269,45 @@ class Worker:
             fixture = self._schedule.get(fixture_id)
             if fixture is None:
                 continue
-            event = DueEvent(
-                fixture=fixture, type=event_type, title=title, body=body
+            fixture = _with_status(
+                fixture, self.store.authoritative_status(fixture_id, fixture.status)
             )
+
+            # The world moved while this was queued.
+            if fixture.is_abnormal:
+                self.store.clear_pending(fixture_id, event_type)
+                continue
+            if event_type in (BEFORE_45, BEFORE_15) and fixture.status not in (
+                "NS",
+                "TBD",
+            ):
+                self.store.clear_pending(fixture_id, event_type)
+                self.store.record(
+                    fixture_id, event_type, OUTCOME_SKIPPED, "already started"
+                )
+                report.skipped_stale += 1
+                continue
+
+            if event_type in (BEFORE_45, BEFORE_15):
+                # Regenerated, so the title states the minutes that are
+                # actually left rather than the ones that were left when the
+                # send first failed.
+                regenerated = due_events(
+                    fixture,
+                    now,
+                    timedelta(seconds=self.config.worker.pre_match_retry_seconds),
+                    previous_status=fixture.status,
+                    enabled_types=(event_type,),
+                )
+                if not regenerated:
+                    self.store.clear_pending(fixture_id, event_type)
+                    continue
+                event = regenerated[0]
+            else:
+                event = DueEvent(
+                    fixture=fixture, type=event_type, title=title, body=body
+                )
+
             self.store.bump_attempt(fixture_id, event_type)
             retried += 1
             self._handle(event, now, report)
@@ -332,6 +452,12 @@ class Worker:
             for fixture_id in self.store.live_fixture_ids()
             if fixture_id not in live_now
         ]
+        # And the ones already known to have finished without a score. They are
+        # gone from the live feed and their status will never change again, so
+        # nothing else would ever ask about them.
+        for fixture_id in self.store.awaiting_result_ids():
+            if fixture_id not in live_now and fixture_id not in finishing:
+                finishing.append(fixture_id)
         if finishing:
             try:
                 # by_ids chunks internally; truncating here would silently drop
@@ -401,3 +527,26 @@ def _moment_has_passed(fixture: Fixture, alert_type: str, now: datetime) -> bool
         return fixture.is_finished
     lead = LEAD_TIMES.get(alert_type, timedelta(0))
     return now >= fixture.kickoff - lead
+
+
+def _with_status(fixture: Fixture, status: str) -> Fixture:
+    """A copy of [fixture] carrying the status we believe to be true."""
+    if status == fixture.status:
+        return fixture
+    return replace(fixture, status=status)
+
+
+def _result_is_complete(fixture: Fixture) -> bool:
+    """Whether the numbers needed to announce this result have arrived.
+
+    A shootout is not complete until its shootout score is in: reporting the
+    extra-time score alone would say a match that had a winner ended level.
+    """
+    if fixture.home_goals is None or fixture.away_goals is None:
+        return False
+    if fixture.status == "PEN":
+        return (
+            fixture.home_penalties is not None
+            and fixture.away_penalties is not None
+        )
+    return True

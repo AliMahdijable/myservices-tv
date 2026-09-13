@@ -25,7 +25,15 @@ CREATE TABLE IF NOT EXISTS sent (
 CREATE TABLE IF NOT EXISTS kickoffs (
     fixture_id  INTEGER PRIMARY KEY,
     kickoff     TEXT NOT NULL,
-    status      TEXT NOT NULL
+    status      TEXT NOT NULL,
+    -- When this fixture was last seen changing, not when it was last read.
+    -- Result freshness is measured from here: a match that ended an hour ago
+    -- is old news whatever its kickoff time was.
+    changed_at  TEXT,
+    -- Set when a fixture is finished but its goals have not arrived yet. It
+    -- leaves the live feed the moment it ends, so without this the follow-up
+    -- lookup stops and the result is never announced at all.
+    awaiting_result INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -160,8 +168,61 @@ class SentLog:
             return None
         return str(row[0])
 
+    def authoritative_status(self, fixture_id: int, observed: str) -> str:
+        """The status to reason about: the more advanced of ours and theirs.
+
+        Preventing a regression in the database is not enough on its own — the
+        pass that observed the regression still has to act on the real state,
+        or a finished match read back as NS gets a fresh kickoff announcement
+        before the database is ever consulted.
+        """
+        known = self.status_of(fixture_id)
+        if known is None:
+            return observed
+        if _STATUS_RANK.get(observed, 0) < _STATUS_RANK.get(known, 0):
+            return known
+        return observed
+
+    def set_awaiting_result(self, fixture_id: int, waiting: bool) -> None:
+        self._db.execute(
+            "UPDATE kickoffs SET awaiting_result=? WHERE fixture_id=?",
+            (1 if waiting else 0, fixture_id),
+        )
+
+    def awaiting_result_ids(self) -> list[int]:
+        rows = self._db.execute(
+            "SELECT fixture_id FROM kickoffs WHERE awaiting_result=1"
+        ).fetchall()
+        return [int(r[0]) for r in rows]
+
+    def changed_at(self, fixture_id: int) -> datetime | None:
+        row = self._db.execute(
+            "SELECT changed_at FROM kickoffs WHERE fixture_id=?", (fixture_id,)
+        ).fetchone()
+        if row is None or not row[0]:
+            return None
+        return datetime.fromisoformat(str(row[0]))
+
+    def last_tick(self) -> datetime | None:
+        row = self._db.execute(
+            "SELECT value FROM meta WHERE key='last_tick'"
+        ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(str(row[0]))
+
+    def remember_tick(self, when: datetime) -> None:
+        self._db.execute(
+            "INSERT INTO meta (key, value) VALUES ('last_tick', ?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (when.astimezone(timezone.utc).isoformat(),),
+        )
+
+    def clear_all_pending(self, fixture_id: int) -> None:
+        self._db.execute("DELETE FROM pending WHERE fixture_id=?", (fixture_id,))
+
     def remember_status(
-        self, fixture_id: int, kickoff: datetime, status: str
+        self, fixture_id: int, kickoff: datetime, status: str, now: datetime
     ) -> None:
         """Records the status, refusing to move it backwards.
 
@@ -171,20 +232,34 @@ class SentLog:
         announced as kicking off all over again.
         """
         current = self.status_of(fixture_id)
+        stamp = kickoff.astimezone(timezone.utc).isoformat()
         if current is not None:
             if _STATUS_RANK.get(status, 0) < _STATUS_RANK.get(current, 0):
                 # Keep the more advanced status; still take the new kickoff,
                 # since a rescheduled match really does move.
                 self._db.execute(
                     "UPDATE kickoffs SET kickoff=? WHERE fixture_id=?",
-                    (kickoff.astimezone(timezone.utc).isoformat(), fixture_id),
+                    (stamp, fixture_id),
+                )
+                return
+            if status == current:
+                self._db.execute(
+                    "UPDATE kickoffs SET kickoff=? WHERE fixture_id=?",
+                    (stamp, fixture_id),
                 )
                 return
         self._db.execute(
-            "INSERT INTO kickoffs (fixture_id, kickoff, status) VALUES (?,?,?)"
+            "INSERT INTO kickoffs"
+            " (fixture_id, kickoff, status, changed_at) VALUES (?,?,?,?)"
             " ON CONFLICT(fixture_id) DO UPDATE SET"
-            "   kickoff=excluded.kickoff, status=excluded.status",
-            (fixture_id, kickoff.astimezone(timezone.utc).isoformat(), status),
+            "   kickoff=excluded.kickoff, status=excluded.status,"
+            "   changed_at=excluded.changed_at",
+            (
+                fixture_id,
+                stamp,
+                status,
+                now.astimezone(timezone.utc).isoformat(),
+            ),
         )
 
     # ── outstanding events ─────────────────────────────────────────────────
